@@ -321,14 +321,19 @@
       if (!response.ok) throw new Error(data.detail || '无法读取批量追踪下载进度');
       if (data.running) {
         if (data.phase === 'tracking') {
+          const completed = Number(data.done || 0);
+          const total = Number(data.total || 0);
+          const currentIndex = Math.min(completed + 1, total || completed + 1);
           const current = data.current_up ? `：${data.current_up}` : '';
-          setStatus(`正在追踪 ${data.done}/${data.total}${current}`);
-          upFeedback.textContent = `追踪中 ${data.done}/${data.total}${current}`;
-          batchButton.textContent = `追踪中 ${data.done}/${data.total}`;
+          const message = `正在追踪第 ${currentIndex}/${total} 个 UP 主${current}`;
+          setStatus(message);
+          upFeedback.textContent = message;
+          batchButton.textContent = `追踪中 ${currentIndex}/${total}`;
         } else {
-          setStatus(`正在下载 ${data.download_done}/${data.download_total}`);
-          upFeedback.textContent = `下载中 ${data.download_done}/${data.download_total}`;
-          batchButton.textContent = `下载中 ${data.download_done}/${data.download_total}`;
+          const message = `下载中 ${data.download_done || 0}/${data.download_total || 0}`;
+          setStatus(message);
+          upFeedback.textContent = message;
+          batchButton.textContent = message;
         }
         return;
       }
@@ -337,8 +342,9 @@
       if (currentUpId) await loadVideos(currentUpId);
       if (window.upManagement) await window.upManagement.load();
       const errorSuffix = Number(data.errors || 0) ? `，${data.errors} 个失败` : '';
-      setStatus(`批量追踪并下载完成：新增 ${data.added_total || 0} 个视频，下载 ${data.download_done || 0}/${data.download_total || 0}${errorSuffix}`);
-      upFeedback.textContent = `批量追踪并下载完成：新增 ${data.added_total || 0} 个视频${errorSuffix}`;
+      const downloadSummary = `下载 ${data.download_done || 0}/${data.download_total || 0}`;
+      setStatus(`批量追踪并下载完成：新增 ${data.added_total || 0} 个视频，${downloadSummary}${errorSuffix}`);
+      upFeedback.textContent = `批量追踪并下载完成：新增 ${data.added_total || 0} 个视频，${downloadSummary}${errorSuffix}`;
     } catch (error) {
       restoreBatchTrackButton(original);
       upFeedback.textContent = error.message;
@@ -355,12 +361,16 @@
     const ids = batchUpIds();
     const since = sinceDate.value;
     if (!ids.length) {
-      upFeedback.textContent = '请先在 UP 主管理页签勾选并启用自动追踪下载的 UP 主';
+      const message = '请先在 UP 主管理页签勾选“自动追踪下载”列';
+      upFeedback.textContent = message;
+      setStatus(message, true);
       return;
     }
     if (!since) {
-      upFeedback.textContent = '请先选择起始日期';
-      setStatus('批量追踪并下载需要起始日期', true);
+      const message = '请先选择批量追踪起始日期';
+      upFeedback.textContent = message;
+      sinceDateStatus.textContent = message;
+      setStatus(message, true);
       return;
     }
     const original = batchButton.textContent;
@@ -378,9 +388,6 @@
       const data = await responseData(response);
       if (!response.ok) throw new Error(data.detail || '批量追踪启动失败');
       if (data.status === 'busy') throw new Error('已有批量任务正在运行');
-      if (data.skipped_ids && data.skipped_ids.length) {
-        upFeedback.textContent = `已跳过 ${data.skipped_ids.length} 个未启用自动追踪的 UP 主`;
-      }
       if (batchTrackTimer) clearInterval(batchTrackTimer);
       batchTrackTimer = setInterval(() => pollBatchTrackDownload(original), 1000);
       await pollBatchTrackDownload(original);

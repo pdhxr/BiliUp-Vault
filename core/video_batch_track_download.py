@@ -1,6 +1,6 @@
 """批量追踪并下载任务编排。
 
-这里串联两个已有用例：先按截止日期增量同步各个 UP，再只下载本轮新增视频。
+这里串联两个已有用例：先按截止日期增量同步各个 UP，再下载期限内所有尚未下载的视频。
 路由层和静态网页层只通过状态快照与本模块交互。
 """
 
@@ -72,6 +72,26 @@ def _append_error(result: dict[str, object], message: str) -> None:
         _state["errors"] = int(_state["errors"]) + 1
 
 
+def _pending_download_videos(rows: object, since_date: str) -> list[dict[str, str]]:
+    """筛选期限内仍未下载的视频，作为本次批量下载清单。"""
+    if not isinstance(rows, list):
+        return []
+    pending: list[dict[str, str]] = []
+    for video in rows:
+        if not isinstance(video, dict) or bool(video.get("downloaded", False)):
+            continue
+        bvid = str(video.get("bvid", "")).strip()
+        video_date = _date_key(video.get("date") or video.get("pub_time"))
+        if not bvid or not video_date or (since_date and video_date < since_date):
+            continue
+        pending.append({
+            "bvid": bvid,
+            "title": str(video.get("title", "")),
+            "date": str(video.get("date") or video.get("pub_time") or ""),
+        })
+    return pending
+
+
 def start_batch_track_download(up_ids: list[str], since_date: str = "") -> dict[str, object]:
     """启动后台批量追踪下载；同一时间只允许一个任务运行。"""
     ids = list(dict.fromkeys(str(value).strip() for value in up_ids if str(value).strip()))
@@ -87,17 +107,11 @@ def start_batch_track_download(up_ids: list[str], since_date: str = "") -> dict[
 
     root = knowledge_base_root()
     queue: list[dict[str, str]] = []
-    skipped_ids: list[str] = []
     for uid in ids:
         following = find(uid, root / "UpList")
         if following is None:
             raise FollowingNotFoundError(f"未找到 UP {uid}")
-        if not bool(following.get("scheduled_tracking", False)):
-            skipped_ids.append(uid)
-            continue
         queue.append({"up_id": uid, "nickname": str(following.get("nickname", uid))})
-    if not queue:
-        raise ValueError("选中的 UP 主均未启用自动追踪下载")
 
     with _state_lock:
         if _state["running"]:
@@ -122,7 +136,7 @@ def start_batch_track_download(up_ids: list[str], since_date: str = "") -> dict[
     global _cancel_requested
     _cancel_requested = False
     Thread(target=_run, args=(queue, cutoff), name="biliup-track-download", daemon=True).start()
-    return {"status": "started", "total": len(queue), "since_date": cutoff, "skipped_ids": skipped_ids}
+    return {"status": "started", "total": len(queue), "since_date": cutoff}
 
 
 def _run(queue: list[dict[str, str]], since_date: str) -> None:
@@ -137,6 +151,7 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
                 "nickname": nickname,
                 "added": 0,
                 "new_videos": [],
+                "pending_videos": [],
                 "download_jobs": [],
                 "status": "ok",
             }
@@ -161,6 +176,7 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
                 ]
                 result["added"] = len(new_videos)
                 result["new_videos"] = new_videos
+                result["pending_videos"] = _pending_download_videos(details.get("rows"), since_date)
                 with _state_lock:
                     _state["added_total"] = int(_state["added_total"]) + len(new_videos)
             except Exception as exc:
@@ -175,7 +191,7 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
         for result in results:
             if result.get("status") != "ok":
                 continue
-            videos = result.get("new_videos", [])
+            videos = result.get("pending_videos", [])
             bvids = [str(video.get("bvid", "")) for video in videos if str(video.get("bvid", ""))]
             if not bvids:
                 continue
@@ -214,15 +230,17 @@ def _wait_for_downloads(bvids: list[str]) -> None:
     deadline = time.monotonic() + _DOWNLOAD_WAIT_SECONDS
     while time.monotonic() < deadline:
         statuses = [get_progress(bvid).get("status") for bvid in unique_bvids]
-        done = sum(status in {"success", "failed"} for status in statuses)
+        done = sum(status == "success" for status in statuses)
         failed = sum(status == "failed" for status in statuses)
         _set(download_done=done, download_failed=failed)
-        if done == len(unique_bvids):
+        if done + failed == len(unique_bvids):
             return
         time.sleep(0.5)
+    statuses = [get_progress(bvid).get("status") for bvid in unique_bvids]
+    done = sum(status == "success" for status in statuses)
     with _state_lock:
         _state["errors"] = int(_state["errors"]) + 1
-    _set(download_done=len(unique_bvids), download_failed=len(unique_bvids))
+    _set(download_done=done, download_failed=len(unique_bvids) - done)
 
 
 def batch_track_download_progress() -> dict[str, object]:

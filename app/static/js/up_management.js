@@ -5,6 +5,7 @@
   const checkAll = document.querySelector('#check-all-ups');
   const batchSyncButton = document.querySelector('#btn-sync');
   const deleteButton = document.querySelector('#btn-delete');
+  const batchSyncButtonLabel = batchSyncButton.textContent;
 
   let rows = [];
   let syncing = false;
@@ -49,10 +50,9 @@
   }
 
   function selectedAutoTrackIds() {
-    const selected = new Set(selectedIds());
-    return rows
-      .filter((row) => selected.has(String(row.up_id)) && Boolean(row.scheduled_tracking))
-      .map((row) => String(row.up_id));
+    return [...tableBody.querySelectorAll('.tracking-checkbox:checked')]
+      .map((checkbox) => checkbox.dataset.upId)
+      .filter(Boolean);
   }
 
   function updateSelectionButtons() {
@@ -61,6 +61,8 @@
 
   function setSyncing(value) {
     syncing = Boolean(value);
+    batchSyncButton.disabled = syncing;
+    batchSyncButton.textContent = syncing ? '同步中…' : batchSyncButtonLabel;
     deleteButton.disabled = syncing || selectedIds().length === 0;
     tableBody.querySelectorAll('.btn-sync-row').forEach((button) => {
       button.disabled = syncing;
@@ -98,7 +100,7 @@
         <td class="col-index">${index + 1}</td>
         <td class="col-name">${escapeHtml(row.nickname)}</td>
         <td class="col-bio" title="${escapeHtml(row.bio)}">${escapeHtml(row.bio)}</td>
-        <td class="col-tracking"><input class="tracking-checkbox" type="checkbox" ${row.scheduled_tracking ? 'checked' : ''} aria-label="${escapeHtml(row.nickname)}自动追踪下载"></td>
+        <td class="col-tracking"><input class="tracking-checkbox" type="checkbox" data-up-id="${escapeHtml(row.up_id)}" ${row.scheduled_tracking ? 'checked' : ''} aria-label="${escapeHtml(row.nickname)}自动追踪下载"></td>
         <td class="col-time">${escapeHtml(formatDate(row.last_sync_time))}</td>
         <td class="col-total">${count(row.total_count)}</td>
         <td class="col-synced">

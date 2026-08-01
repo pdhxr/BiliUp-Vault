@@ -149,7 +149,7 @@ curl -s -X POST http://127.0.0.1:8000/api/followings/tracking \
   -H 'Content-Type: application/json' \
   -d '{"up_id":"<UP_ID_1>","scheduled_tracking":true}'
 
-# 按 config.json 中保存的起始日期批量追踪并下载选中的 UP（替换为实际 UID）
+# 按 config.json 中保存的起始日期批量追踪并下载“自动追踪下载”列已启用的 UP（替换为实际 UID）
 curl -s -X POST http://127.0.0.1:8000/api/up/videos/batch-track-download \
   -H 'Content-Type: application/json' \
   -d '{"up_ids":["<UP_ID_1>","<UP_ID_2>"]}'

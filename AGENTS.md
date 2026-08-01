@@ -33,7 +33,7 @@ core/
   following_delete.py      # UP 主删除用例
   video_sync.py            # UP 视频列表刷新用例
   video_batch_sync.py      # 选中 UP 的后台批量增量同步
-  video_batch_track_download.py # 按配置日期追踪并下载选中的自动追踪 UP
+  video_batch_track_download.py # 按配置日期追踪并下载“自动追踪下载”列已勾选的 UP
   video_download.py        # 视频下载队列与状态用例
   download_files.py        # 下载文件发现、临时文件清理和安全命名
   download_progress.py     # 下载状态存储、大小监测和过期清理

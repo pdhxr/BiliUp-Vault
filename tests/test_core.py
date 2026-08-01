@@ -324,7 +324,7 @@ class CoreTests(unittest.TestCase):
     @patch(
         "core.video_batch_track_download.refresh_up_videos_with_details",
         return_value={
-            "rows": [{"bvid": "BVnew", "title": "新视频"}],
+            "rows": [{"bvid": "BVnew", "title": "新视频", "date": "20260720", "downloaded": False}],
             "added_count": 1,
             "pages": 1,
             "new_videos": [{"bvid": "BVnew", "title": "新视频", "date": "20260720"}],
@@ -347,25 +347,73 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(state["download_total"], 1)
         self.assertEqual(state["download_done"], 1)
         self.assertEqual(state["results"][0]["new_videos"][0]["bvid"], "BVnew")
+        self.assertEqual(state["results"][0]["pending_videos"][0]["bvid"], "BVnew")
         refresh.assert_called_once_with("123", since_date="20260701")
         queue.assert_called_once_with("123", ["BVnew"])
         progress.assert_called()
 
+    @patch("core.video_batch_track_download.get_progress", return_value={"status": "success"})
+    @patch(
+        "core.video_batch_track_download.queue_downloads",
+        return_value=[
+            {"bvid": "BVold", "status": "queued"},
+            {"bvid": "BVnew", "status": "queued"},
+        ],
+    )
+    @patch(
+        "core.video_batch_track_download.refresh_up_videos_with_details",
+        return_value={
+            "rows": [
+                {"bvid": "BVold", "title": "已有但未下载", "date": "20260720", "downloaded": False},
+                {"bvid": "BVdone", "title": "已经下载", "date": "20260721", "downloaded": True},
+                {"bvid": "BVbefore", "title": "期限前", "date": "20260701", "downloaded": False},
+                {"bvid": "BVnew", "title": "新视频", "date": "20260725", "downloaded": False},
+            ],
+            "added_count": 1,
+            "pages": 1,
+            "new_videos": [{"bvid": "BVnew", "title": "新视频", "date": "20260725"}],
+        },
+    )
+    def test_batch_track_download_queues_all_pending_videos_after_cutoff(
+        self, refresh, queue, progress
+    ) -> None:
+        library_root = self.root / "library"
+        save("123", "示例 UP", "简介", library_root / "UpList")
+        with patch("core.video_batch_track_download.knowledge_base_root", return_value=library_root):
+            run_batch_track_download([{"up_id": "123", "nickname": "示例 UP"}], "20260715")
+
+        from core.video_batch_track_download import batch_track_download_progress
+
+        state = batch_track_download_progress()
+        self.assertEqual(state["download_total"], 2)
+        self.assertEqual(state["download_done"], 2)
+        self.assertEqual(
+            [video["bvid"] for video in state["results"][0]["pending_videos"]],
+            ["BVold", "BVnew"],
+        )
+        refresh.assert_called_once_with("123", since_date="20260715")
+        queue.assert_called_once_with("123", ["BVold", "BVnew"])
+        progress.assert_called()
+        from core.video_batch_track_download import _state, _state_lock
+        with _state_lock:
+            _state.update({"added_total": 0, "download_total": 0, "download_done": 0, "download_failed": 0})
+
     @patch("core.video_batch_track_download.Thread")
     @patch("core.video_batch_track_download.batch_track_since_date", return_value="2026-07-01")
     @patch("core.video_batch_track_download.knowledge_base_root")
-    def test_batch_track_start_uses_config_date_and_skips_disabled_ups(self, configured_root, _date, thread) -> None:
+    def test_batch_track_start_uses_config_date_for_auto_column_ids(self, configured_root, _date, thread) -> None:
         library_root = self.root / "library"
         save("123", "未启用 UP", "简介", library_root / "UpList")
         save("456", "已启用 UP", "简介", library_root / "UpList")
+        # 前端只把“自动追踪下载”列已勾选的 UID 传入；后端不再按主表复选框或记录字段二次筛选。
         set_scheduled_tracking("123", False, library_root / "UpList")
         configured_root.return_value = library_root
 
         result = start_batch_track_download(["123", "456"])
 
         self.assertEqual(result["since_date"], "20260701")
-        self.assertEqual(result["total"], 1)
-        self.assertEqual(result["skipped_ids"], ["123"])
+        self.assertEqual(result["total"], 2)
+        self.assertNotIn("skipped_ids", result)
         thread.assert_called_once()
         thread.return_value.start.assert_called_once_with()
         from core.video_batch_track_download import _state, _state_lock

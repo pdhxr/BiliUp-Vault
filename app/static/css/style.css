@@ -137,6 +137,7 @@ body {
 }
 .track-date, .up-selector { padding: 6px 10px; border-radius: 6px; font-size: 13px; }
 .track-date-label { color: #4b5563; font-size: 13px; white-space: nowrap; }
+.track-date-hint { color: #6b7280; font-size: 12px; white-space: nowrap; }
 .track-date-status { min-width: 42px; color: #6b7280; font-size: 12px; white-space: nowrap; }
 .track-date:focus, .up-selector:focus, .library-root-input:focus, .single-video-input:focus {
   border-color: #2563eb;

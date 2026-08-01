@@ -27,7 +27,7 @@
 - `core/video_reconcile.py`：协调远端追踪清单与本地视频库状态。
 - `core/video_index.py`：按网站元数据扫描已有月度视频文件，补建本地 `videos.jsonl`。
 - `core/video_batch_sync.py`：管理选中 UP 的后台批量增量同步和进度快照。
-- `core/video_batch_track_download.py`：从应用配置读取起始日期，校验管理页选中的 `scheduled_tracking` UP，编排按日期批量追踪与下载；先调用视频追踪用例，再把本轮新增 BV 号交给下载队列，并提供两阶段进度快照。
+- `core/video_batch_track_download.py`：从应用配置读取起始日期，接收前端按“自动追踪下载”列筛出的 UP，编排按日期批量追踪与下载；刷新后从每个 UP 的完整视频列表筛选期限内未下载的视频，交给下载队列，并提供两阶段进度快照。
 - `core/video_download.py`：后台下载队列、文件命名和索引更新；通过进度模块更新任务状态。
 - `core/download_files.py`：识别 OpenCLI 生成的视频文件、清理 `.part` 临时文件和执行跨平台安全命名；不包含 HTTP 或 OpenCLI 调用。
 - `core/download_progress.py`：下载状态存储、过期记录清理和下载目录大小监测，不包含 OpenCLI 或 HTTP 逻辑。
@@ -52,7 +52,7 @@
 
 自动追踪设置：WebUI → `POST /api/followings/tracking` → `core/followings.py` → `UpList/followings.json`，保存每个 UP 的 `scheduled_tracking` 开关。批量日期设置：WebUI → `GET/PUT /api/settings/batch-track` → `core/setup.py` → `core/configuration.py`，保存到与知识库目录相同的应用 `config.json`。
 
-批量追踪并下载：WebUI 读取配置中的起始日期，并读取 UP 主管理页签当前勾选且 `scheduled_tracking=true` 的 UP，调用 `POST /api/up/videos/batch-track-download` → `core/video_batch_track_download.py`。该模块后台串行调用 `core/video_sync.py` 的截止日期分页追踪，收集每个 UP 本轮新发现的 BV 号，再调用 `core/video_download.py` 的下载队列；WebUI 通过 `GET /api/up/videos/batch-track-download-progress` 轮询 `tracking`/`downloading` 两阶段状态。追踪只保留不早于起始日期且不在远端追踪清单中的视频，下载阶段不会重复提交已有记录。
+批量追踪并下载：WebUI 读取配置中的起始日期，并把 UP 主管理页签“自动追踪下载”列已勾选的全部 UP 组成 `up_ids`；左侧主复选框不参与此功能。随后调用 `POST /api/up/videos/batch-track-download` → `core/video_batch_track_download.py`。该模块后台串行调用 `core/video_sync.py` 的截止日期分页刷新，收集每个 UP 的新视频并更新远端追踪清单；随后从完整视频列表筛选日期不早于起始日期且 `downloaded=false` 的视频（包含之前已登记但尚未下载的视频），交给 `core/video_download.py` 的下载队列。WebUI 通过 `GET /api/up/videos/batch-track-download-progress` 轮询 `tracking`/`downloading` 两阶段状态。下载阶段的 `download_done/download_total` 显示成功完成数/需要下载总数，`download_failed` 单独记录失败数。
 
 视频下载：WebUI → `POST /api/videos/download` → FastAPI videos route → `core/video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`。下载用例按 `best`、`720p`、`480p` 顺序重试，依据实际生成的视频文件确认成功；成功后由 core 同步更新 `UpList/<UP名称>.jsonl` 的追踪状态和 `SortedMp4/<UP名称>/videos.jsonl` 的本地文件索引，再更新 `followings.json` 统计。
 
