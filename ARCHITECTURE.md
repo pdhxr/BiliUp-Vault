@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-当前 MVP 已实现首次知识库目录设置、OpenCLI 搜索、UP 单选登记、UP 视频列表刷新和选中视频下载。范围见 [PRD.md](PRD.md)。
+当前 MVP 已实现首次知识库目录设置、OpenCLI 搜索、UP 单选登记、UP 视频列表刷新、选中视频下载和字幕脚本 sidecar 管理。范围见 [PRD.md](PRD.md)。
 
 ## 三层架构
 
@@ -29,6 +29,7 @@
 - `core/video_batch_sync.py`：管理选中 UP 的后台批量增量同步和进度快照。
 - `core/video_batch_track_download.py`：从应用配置读取起始日期，接收前端按“自动追踪下载”列筛出的 UP，编排按日期批量追踪与下载；刷新后从每个 UP 的完整视频列表筛选期限内未下载的视频，交给下载队列，并提供两阶段进度快照。
 - `core/video_download.py`：后台下载队列、文件命名和索引更新；通过进度模块更新任务状态。
+- `core/subtitle_download.py`：调用 OpenCLI 获取字幕脚本，写入视频旁的 `__transcript.md` sidecar，并同步远端追踪清单和本地视频索引的 `transcript` 状态；字幕失败不阻断视频下载。
 - `core/download_files.py`：识别 OpenCLI 生成的视频文件、清理 `.part` 临时文件和执行跨平台安全命名；不包含 HTTP 或 OpenCLI 调用。
 - `core/download_progress.py`：下载状态存储、过期记录清理和下载目录大小监测，不包含 OpenCLI 或 HTTP 逻辑。
 - `core/repositories/videos.py`：读写 `<knowledge_base_root>/UpList/<UP名称>.jsonl` 远端追踪清单。
@@ -54,7 +55,9 @@
 
 批量追踪并下载：WebUI 读取配置中的起始日期，并把 UP 主管理页签“自动追踪下载”列已勾选的全部 UP 组成 `up_ids`；左侧主复选框不参与此功能。随后调用 `POST /api/up/videos/batch-track-download` → `core/video_batch_track_download.py`。该模块后台串行调用 `core/video_sync.py` 的截止日期分页刷新，收集每个 UP 的新视频并更新远端追踪清单；随后从完整视频列表筛选日期不早于起始日期且 `downloaded=false` 的视频（包含之前已登记但尚未下载的视频），交给 `core/video_download.py` 的下载队列。WebUI 通过 `GET /api/up/videos/batch-track-download-progress` 轮询 `tracking`/`downloading` 两阶段状态。下载阶段的 `download_done/download_total` 显示成功完成数/需要下载总数，`download_failed` 单独记录失败数。
 
-视频下载：WebUI → `POST /api/videos/download` → FastAPI videos route → `core/video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`。下载用例按 `best`、`720p`、`480p` 顺序重试，依据实际生成的视频文件确认成功；成功后由 core 同步更新 `UpList/<UP名称>.jsonl` 的追踪状态和 `SortedMp4/<UP名称>/videos.jsonl` 的本地文件索引，再更新 `followings.json` 统计。
+视频下载：WebUI → `POST /api/videos/download` → FastAPI videos route → `core/video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`。下载用例按 `best`、`720p`、`480p` 顺序重试，依据实际生成的视频文件确认成功；成功后由 `core/subtitle_download.py` 尝试获取字幕并写入相邻 `__transcript.md`，再由 core 同步更新 `UpList/<UP名称>.jsonl` 的追踪状态、`SortedMp4/<UP名称>/videos.jsonl` 的本地文件索引和 `followings.json` 统计。字幕获取失败不改变视频任务的成功状态。
+
+字幕状态刷新：视频刷新先扫描 `SortedMp4/<UP名称>/<YYYYMM>/` 中的真实视频和相邻 `__transcript.md`，更新本地索引的 `transcript`，再将该状态校准到远端追踪清单。批量追踪完成后，对已下载但 `transcript=false` 且缺少 sidecar 的视频排队重试字幕获取。
 
 下载进度：WebUI `download_progress.js` 每秒调用 `GET /api/videos/download-progress`；路由只返回 `core/download_progress.py` 的状态快照。后台任务在 OpenCLI 下载期间监测当前目录的新文件大小，状态记录保留最多 30 分钟，前端展示排队中、下载中、完成和失败。
 
@@ -62,7 +65,7 @@
 
 两套 JSONL 不得混用：远端追踪清单保存网站元数据和状态；本地 `videos.jsonl` 只保存硬盘上真实存在的视频文件。视频下载目录按月份分层，文件名为 `<UP名称>_<YYYYMMDD>_<标题>.<扩展名>`。
 
-UP 管理列表沿用参考页面的列结构，并增加可读的 UP 简介列。视频统计由刷新和下载用例回写；字幕、转录和调度不在当前 MVP 中实现。
+UP 管理列表沿用参考页面的列结构，并增加可读的 UP 简介列。视频统计由刷新和下载用例回写；视频下载页的“有字幕脚本”列来自本地 sidecar 状态。语音转录和调度不在当前 MVP 中实现。
 
 ## 跨平台原则
 

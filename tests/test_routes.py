@@ -101,6 +101,7 @@ class RouteTests(unittest.TestCase):
         video_script = self.client.get("/static/js/video_download.js")
         self.assertEqual(video_script.status_code, 200)
         self.assertIn("/api/videos/download", video_script.text)
+        self.assertIn("video.transcript ? '是' : '否'", video_script.text)
         self.assertIn("正在增量同步", video_script.text)
         self.assertIn("正在追踪第", video_script.text)
         self.assertIn("下载中 ${data.download_done || 0}/${data.download_total || 0}", video_script.text)

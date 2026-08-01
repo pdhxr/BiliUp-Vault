@@ -16,12 +16,18 @@ from core.opencli_videos import OpenCliVideoError, download_video
 from core.repositories.followings import find, update_video_stats
 from core.repositories.library import find_local_video, record_download
 from core.repositories.videos import downloaded_count, list_videos, mark_downloaded, safe_video_directory_name
+from core.subtitle_download import download_subtitle
 from core.video_errors import FollowingNotFoundError
 
 
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="biliup-download")
 _MAX_DOWNLOAD_ATTEMPTS = 3
 _DOWNLOAD_QUALITIES = ("best", "720p", "480p")
+
+
+def _ensure_subtitle(bvid: str, video_path: Path) -> bool:
+    """下载后补拉官方字幕；字幕不可用时不影响视频下载成功。"""
+    return download_subtitle(bvid, video_path)
 
 
 def _download_directory(root: Path, following: dict, uid: str, date: str) -> Path:
@@ -48,12 +54,13 @@ def _download_one(uid: str, bvid: str) -> None:
     indexed = find_local_video(root, nickname, bvid=bvid, title=title, date=date, uid=uid)
     if indexed:
         local_path = root / str(indexed["relative_path"])
+        transcript = _ensure_subtitle(bvid, local_path)
         rows = mark_downloaded(
             root / "UpList",
             nickname,
             bvid,
             str(indexed["original_filename"]),
-            transcript=bool(indexed.get("transcript", False)),
+            transcript=transcript,
         )
         update_video_stats(
             uid,
@@ -74,7 +81,7 @@ def _download_one(uid: str, bvid: str) -> None:
         return
     if expected.is_file() and expected.stat().st_size > 0:
         relative_path = expected.relative_to(root).as_posix()
-        transcript = expected.with_name(expected.stem + "__transcript.md").is_file()
+        transcript = _ensure_subtitle(bvid, expected)
         record_download(root, nickname, expected, bvid=bvid, title=title, date=date, transcript=transcript, uid=uid)
         rows = mark_downloaded(root / "UpList", nickname, bvid, relative_path, transcript=transcript)
         update_video_stats(
@@ -123,7 +130,7 @@ def _download_one(uid: str, bvid: str) -> None:
         raise OpenCliVideoError(last_error or "OpenCLI 下载完成，但未找到视频文件")
     target = rename_video(source, directory, nickname, uid, title, date)
     relative_path = target.relative_to(root).as_posix()
-    transcript = target.with_name(target.stem + "__transcript.md").is_file()
+    transcript = _ensure_subtitle(bvid, target)
     record_download(root, nickname, target, bvid=bvid, title=title, date=date, transcript=transcript, uid=uid)
     rows = mark_downloaded(root / "UpList", nickname, bvid, relative_path, transcript=transcript)
     update_video_stats(

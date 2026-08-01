@@ -77,7 +77,7 @@
         <td class="col-date">${escapeHtml(formatDate(video.pub_time))}</td>
         <td class="col-title" title="${escapeHtml(video.title)}">${escapeHtml(video.title)}</td>
         <td class="col-download video-download-state">${video.downloaded ? '是' : '否'}</td>
-        <td class="col-script">—</td>`;
+        <td class="col-script">${video.transcript ? '是' : '否'}</td>`;
       row.querySelector('.video-checkbox').addEventListener('change', updateButtons);
       tableBody.appendChild(row);
     });

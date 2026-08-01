@@ -126,6 +126,30 @@ def record_download(
     return entry
 
 
+def set_transcript(
+    root: Path,
+    nickname: str,
+    *,
+    bvid: str,
+    title: str = "",
+    date: str = "",
+    transcript: bool,
+    uid: str = "unknown-up",
+) -> dict | None:
+    """更新本地视频索引中的字幕脚本状态。"""
+    index_path = library_videos_path(root, nickname, uid)
+    rows = _load(index_path)
+    for row in rows:
+        if not _matches(row, bvid=bvid, title=title, date=date):
+            continue
+        if row.get("transcript") == bool(transcript):
+            return dict(row)
+        row["transcript"] = bool(transcript)
+        _write_atomically(index_path, _serialize(rows))
+        return dict(row)
+    return None
+
+
 def index_existing_videos(
     root: Path,
     nickname: str,
@@ -136,22 +160,28 @@ def index_existing_videos(
     """将已存在且有网站元数据对应的视频补入本地索引。"""
     index_path = library_videos_path(root, nickname, uid)
     rows = _load(index_path)
-    known_paths = {str(row.get("relative_path", "")) for row in rows}
     added = 0
+    changed = False
     for candidate in candidates:
         video_path = Path(candidate.get("path", ""))
         if not video_path.is_file() or video_path.stat().st_size <= 0:
             continue
         relative_path = video_path.relative_to(root).as_posix()
-        if relative_path in known_paths or any(
-            _matches(
+        existing = next((
+            row for row in rows
+            if relative_path == str(row.get("relative_path", ""))
+            or _matches(
                 row,
                 bvid=str(candidate.get("bvid", "")),
                 title=str(candidate.get("title", "")),
                 date=str(candidate.get("date", "")),
             )
-            for row in rows
-        ):
+        ), None)
+        transcript = video_path.with_name(video_path.stem + "__transcript.md").is_file()
+        if existing is not None:
+            if existing.get("transcript") != transcript:
+                existing["transcript"] = transcript
+                changed = True
             continue
         rows.append(
             {
@@ -161,12 +191,11 @@ def index_existing_videos(
                 "relative_path": relative_path,
                 "original_filename": video_path.name,
                 "size_bytes": video_path.stat().st_size,
-                "transcript": video_path.with_name(video_path.stem + "__transcript.md").is_file(),
+                "transcript": transcript,
                 "scanned_at": _timestamp(),
             }
         )
-        known_paths.add(relative_path)
         added += 1
-    if added:
+    if added or changed:
         _write_atomically(index_path, _serialize(rows))
     return added

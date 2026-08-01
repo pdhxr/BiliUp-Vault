@@ -9,14 +9,14 @@
 - 所有文件路径使用 `pathlib`。项目内部路径使用项目根目录下的相对路径；禁止硬编码路径。用户首次选择的 `knowledge_base_root` 是配置中唯一允许保存的绝对路径，由 `core/utils/system/` 发现应用配置目录后统一读取。
 - Windows/macOS 差异代码只能放在 `core/utils/system/`，以统一函数接口屏蔽平台差异。其他模块不得判断系统类型、调用 shell 或使用系统专有 API。
 - OpenCLI 仅能由 `core` 内的适配模块调用；路由、网页与数据写入器不得执行 CLI 命令。
-- 不添加字幕、转录、调度、登录、迁移、云同步、批量写入和文件整理等非 MVP 功能；UP 管理列表删除只移除登记与视频索引，不删除已下载视频文件。
+- 不添加转录、调度、登录、迁移、云同步、批量写入和文件整理等非 MVP 功能；视频下载后的字幕脚本获取与状态判断属于当前 MVP；UP 管理列表删除只移除登记与视频索引，不删除已下载视频文件。
 
 ### 原项目参考规则
 
 - 开发具体功能时，只读参考 `/Users/juliehou/Movies/Up/tools/server.py` 的既有行为，重点核对 OpenCLI 命令、终端输出解析、超时与错误语义。
 - 参考文件不是本项目依赖：禁止从源码导入、运行时访问或复制其绝对路径；新项目必须能够独立运行。
 - 禁止照搬旧 `server.py` 的单文件聚合结构。HTTP 处理留在 `app/routes/`，搜索与写入实现放在 `core/`，系统差异放在 `core/utils/system/`。
-- 只提取当前 PRD 所需的 UP 搜索、登记、视频列表刷新和视频下载逻辑；旧项目的字幕、转录、调度、迁移与日志功能不得带入 MVP。
+- 只提取当前 PRD 所需的 UP 搜索、登记、视频列表刷新、视频下载和字幕脚本获取逻辑；旧项目的转录、调度、迁移与日志功能不得带入 MVP。
 
 ## 项目结构
 
@@ -35,6 +35,7 @@ core/
   video_batch_sync.py      # 选中 UP 的后台批量增量同步
   video_batch_track_download.py # 按配置日期追踪并下载“自动追踪下载”列已勾选的 UP
   video_download.py        # 视频下载队列与状态用例
+  subtitle_download.py     # 字幕脚本获取、sidecar 写入和 transcript 状态同步
   download_files.py        # 下载文件发现、临时文件清理和安全命名
   download_progress.py     # 下载状态存储、大小监测和过期清理
   opencli_videos.py        # OpenCLI 视频查询/下载适配

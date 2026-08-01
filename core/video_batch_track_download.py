@@ -13,6 +13,7 @@ from core.download_progress import get_progress
 from core.repositories.followings import find
 from core.video_download import queue_downloads
 from core.video_errors import FollowingNotFoundError
+from core.subtitle_download import queue_missing_subtitles_for_up
 from core.video_sync import refresh_up_videos_with_details
 
 
@@ -28,6 +29,7 @@ _state: dict[str, object] = {
     "download_total": 0,
     "download_done": 0,
     "download_failed": 0,
+    "subtitle_queued": 0,
     "errors": 0,
     "started_at": "",
     "finished_at": "",
@@ -128,6 +130,7 @@ def start_batch_track_download(up_ids: list[str], since_date: str = "") -> dict[
             "download_total": 0,
             "download_done": 0,
             "download_failed": 0,
+            "subtitle_queued": 0,
             "errors": 0,
             "started_at": _now(),
             "finished_at": "",
@@ -153,6 +156,7 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
                 "new_videos": [],
                 "pending_videos": [],
                 "download_jobs": [],
+                "subtitle_jobs": 0,
                 "status": "ok",
             }
             _set(current_up=nickname, current_up_id=uid)
@@ -185,6 +189,21 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
             with _state_lock:
                 _state["results"] = list(results)
                 _state["done"] = int(_state["done"]) + 1
+
+        for result in results:
+            if result.get("status") != "ok":
+                continue
+            try:
+                subtitle_jobs = queue_missing_subtitles_for_up(
+                    str(result["up_id"]),
+                    root=knowledge_base_root(),
+                )
+                result["subtitle_jobs"] = subtitle_jobs
+                with _state_lock:
+                    _state["subtitle_queued"] = int(_state["subtitle_queued"]) + subtitle_jobs
+            except Exception:
+                # 字幕是可选附加物，补拉失败不影响视频下载任务。
+                result["subtitle_jobs"] = 0
 
         download_tasks: list[tuple[str, str]] = []
         _set(phase="downloading", current_up="", current_up_id="")

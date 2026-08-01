@@ -121,6 +121,18 @@ def mark_downloaded(
     return list_videos(root, nickname)
 
 
+def mark_transcript(root: Path, nickname: str, bvid: str, transcript: bool) -> list[dict]:
+    """更新远端追踪清单中的字幕脚本状态。"""
+    path = video_path(root, nickname)
+    rows = _load(path)
+    target = next((row for row in rows if str(row.get("bvid", "")).upper() == str(bvid).upper()), None)
+    if target is None:
+        raise ValueError(f"未找到视频 {bvid}")
+    target["transcript"] = bool(transcript)
+    _write_atomically(path, "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in _sorted(rows)))
+    return list_videos(root, nickname)
+
+
 def reconcile_downloaded(root: Path, nickname: str, local_lookup) -> list[dict]:
     """用本地视频库事实校准远端清单的下载状态。"""
     path = video_path(root, nickname)

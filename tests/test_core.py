@@ -15,10 +15,11 @@ from core.download_progress import progress_rows, set_progress
 from core.followings import save_following
 from core.followings import save_following_and_refresh
 from core.following_delete import delete_followings
-from core.opencli_videos import OpenCliVideoError, _items, download_video, fetch_user_videos
+from core.opencli_videos import OpenCliVideoError, _items, download_video, fetch_user_videos, fetch_video_subtitles
 from core.repositories.followings import list_rows, save, set_scheduled_tracking
 from core.repositories.library import list_local_videos, record_download
 from core.repositories.videos import list_videos, mark_downloaded, merge_videos
+from core.subtitle_download import download_subtitle, has_transcript
 from core.up_search import _parse_items, search_up
 from core.video_download import _download_one, queue_downloads
 from core.video_batch_track_download import _run as run_batch_track_download
@@ -151,6 +152,29 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(rows[0]["downloaded"])
         self.assertTrue((self.root / "示例 UP.jsonl").is_file())
 
+    @patch("core.opencli_videos.run_opencli")
+    def test_fetch_video_subtitles_uses_background_opencli_and_normalizes_rows(self, run) -> None:
+        run.return_value = subprocess.CompletedProcess(
+            [], 0,
+            stdout='notice\\n[{"from": "0", "to": "1", "content": "第一句"}]',
+            stderr="",
+        )
+        rows = fetch_video_subtitles("BV1abc")
+        self.assertEqual(rows, [{"from": "0", "to": "1", "content": "第一句"}])
+        self.assertEqual(run.call_args.args[0][-2:], ["--window", "background"])
+
+    @patch("core.subtitle_download.fetch_video_subtitles", return_value=[
+        {"from": "0", "to": "1", "content": "第一句 | 说明"},
+    ])
+    def test_download_subtitle_writes_sidecar_markdown(self, _fetch) -> None:
+        video = self.root / "SortedMp4/示例 UP/202608/示例 UP_20260801_视频.mp4"
+        video.parent.mkdir(parents=True, exist_ok=True)
+        video.write_bytes(b"video")
+        self.assertTrue(download_subtitle("BV1abc", video))
+        transcript = video.with_name(video.stem + "__transcript.md")
+        self.assertTrue(has_transcript(video))
+        self.assertIn("第一句 \\| 说明", transcript.read_text(encoding="utf-8"))
+
     def test_video_index_uses_reference_local_library_fields(self) -> None:
         library_root = self.root / "library"
         video = library_root / "SortedMp4/火星船长1989/202607/火星船长1989_20260731_科技-红利双星系统.mp4"
@@ -190,13 +214,15 @@ class CoreTests(unittest.TestCase):
         video = library_root / "SortedMp4/示例 UP/202607/示例 UP_20260731_视频.mp4"
         video.parent.mkdir(parents=True, exist_ok=True)
         video.write_bytes(b"video")
-        record_download(library_root, "示例 UP", video, bvid="BV1abc", date="20260731", title="视频", transcript=True)
+        video.with_name(video.stem + "__transcript.md").write_text("# 视频\n", encoding="utf-8")
+        record_download(library_root, "示例 UP", video, bvid="BV1abc", date="20260731", title="视频", transcript=False)
         configured_root.return_value = library_root
 
         rows = reconcile_up_videos("123")
         self.assertTrue(rows[0]["downloaded"])
         self.assertEqual(rows[0]["local_filename"], video.name)
         self.assertTrue(rows[0]["transcript"])
+        self.assertTrue(list_local_videos(library_root, "示例 UP", "123")[0]["transcript"])
 
     @patch("core.video_download._executor.submit")
     @patch("core.video_download.knowledge_base_root")
@@ -219,9 +245,10 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(rows[0]["status"], "downloading")
         self.assertEqual(rows[0]["size_bytes"], 2048)
 
+    @patch("core.video_download._ensure_subtitle", return_value=False)
     @patch("core.video_download.download_video")
     @patch("core.video_download.knowledge_base_root")
-    def test_single_download_retries_and_accepts_generated_file(self, configured_root, opencli_download) -> None:
+    def test_single_download_retries_and_accepts_generated_file(self, configured_root, opencli_download, _subtitle) -> None:
         library_root = self.root / "library"
         save("123", "示例 UP", "简介", library_root / "UpList")
         merge_videos(
