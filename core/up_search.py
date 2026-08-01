@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 
 from core.utils.system.process import run_opencli
 
@@ -37,7 +38,7 @@ def search_up(nickname: str) -> list[dict[str, str]]:
         result = run_opencli(["bilibili", "search", nickname, "--type", "user", "-f", "json"], timeout=30)
     except FileNotFoundError as exc:
         raise OpenCliSearchError("未找到 OpenCLI，请先安装并配置 OpenCLI") from exc
-    except TimeoutError as exc:
+    except subprocess.TimeoutExpired as exc:
         raise OpenCliSearchError("UP 主搜索超时，请重试") from exc
     if result.returncode != 0:
         raise OpenCliSearchError("UP 主搜索失败，请确认 OpenCLI 已连接到 B 站")

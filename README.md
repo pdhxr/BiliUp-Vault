@@ -39,6 +39,8 @@ BiliUp 是跨 macOS 和 Windows 的本地 B 站 UP 主搜索与登记工具。
 
 只有 `opencli doctor` 的 Daemon、Extension 和 Connectivity 检查正常后，BiliUp 的搜索功能才能使用。若检查失败，请先确认 Chrome 已启动、扩展已启用且 B 站仍处于登录状态，然后重新执行检查。
 
+BiliUp 首次启动会检查 OpenCLI。未安装或无法运行时，首页显示安装提示并禁用搜索；安装完成并重新启动 BiliUp 后会自动重新检测。已安装在 Homebrew、npm、NVM 或 Volta 常见位置的 OpenCLI，即使从 Finder 双击应用也会被系统适配层查找。
+
 ### 为什么需要浏览器登录
 
 B 站用户搜索是 OpenCLI 的浏览器型命令，需要从已登录的 Chrome 会话获取访问凭据。BiliUp 不保存 B 站密码，也不要求用户把 Cookie、令牌或密码写入项目文件。
@@ -126,13 +128,13 @@ Windows PowerShell：
 macOS 生成 `.app` 与 `.dmg`：
 
 ```bash
-.venv/bin/python scripts/build.py macos
+.venv/bin/python -m scripts.build macos
 ```
 
 Windows 生成 EXE 目录（必须在 Windows 原生环境执行）：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\build.py windows
+.\.venv\Scripts\python.exe -m scripts.build windows
 ```
 
 构建产物位于 `dist/`，不提交 Git。macOS 和 Windows 必须分别在对应原生系统构建与验证，PyInstaller 不支持从 macOS 直接生成可验证的 Windows EXE。
@@ -140,7 +142,6 @@ Windows 生成 EXE 目录（必须在 Windows 原生环境执行）：
 ## 当前发布限制
 
 - OpenCLI、Node.js、Chrome 扩展与 B 站浏览器登录尚未被安装包自动处理。
-- GUI 启动的应用需要能够从系统环境中找到 `opencli` 命令。
 - macOS 包尚未签名、公证；Windows EXE 尚未原生构建、签名和验证。
 - 打包版 UpList 的固定保存位置仍待修复。
 

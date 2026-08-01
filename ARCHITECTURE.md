@@ -28,3 +28,5 @@ WebUI → FastAPI route → core → OpenCLI / UpList repository。
 核心业务模块由 macOS 和 Windows 共用。平台差异仅限 `core/utils/system/`；两端运行同一套测试，并分别原生打包验证。
 
 应用启动时自动选择可用的本地端口并打开 WebUI，避免占用或终止其他程序的端口。打包后的应用不创建虚拟环境；虚拟环境只用于源码开发和构建。
+
+首次运行通过 `/api/runtime-status` 检查 OpenCLI。系统适配层从当前 PATH 以及 Homebrew、npm、NVM、Volta 等平台常见位置发现可执行文件，并为子进程补齐 Node/OpenCLI 所需 PATH；未安装时由 WebUI 展示人工安装、Chrome 扩展和 B 站登录指引。

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from core.followings import save_following
+from core.runtime import opencli_status
 from core.up_search import OpenCliSearchError, search_up
 
 
@@ -16,6 +17,11 @@ class FollowingRequest(BaseModel):
     uid: str = Field(min_length=1, max_length=32)
     nickname: str = Field(min_length=1, max_length=100)
     bio: str = ""
+
+
+@router.get("/runtime-status")
+def runtime_status() -> dict[str, object]:
+    return opencli_status()
 
 
 @router.post("/up-search")

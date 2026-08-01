@@ -12,19 +12,21 @@
     button { padding: 11px 16px; border: 0; border-radius: 8px; background: #2156d9; color: white; font: inherit; cursor: pointer; }
     button:disabled { background: #98a2b3; cursor: default; } .result { display: block; width: 100%; margin: 10px 0; padding: 14px; text-align: left; background: white; border: 1px solid #e4e7ec; color: #172033; }
     .result.selected { border: 2px solid #2156d9; } .meta { display: block; margin-top: 5px; color: #667085; font-size: 14px; } .actions { margin-top: 18px; } #message { min-height: 24px; margin-top: 16px; } .error { color: #b42318; } .success { color: #027a48; }
+    .runtime { margin: 20px 0; padding: 14px; border-radius: 8px; background: #eef4ff; color: #3538cd; } .runtime.error { background: #fef3f2; color: #b42318; } .runtime code { display: block; margin: 10px 0; user-select: all; } .runtime a { color: inherit; }
   </style>
 </head>
 <body>
   <main>
     <h1>BiliUp</h1>
     <p>搜索并登记 B 站 UP 主</p>
+    <div id="runtime" class="runtime">正在检查 OpenCLI…</div>
     <div class="search"><input id="query" placeholder="输入 UP 主昵称" autocomplete="off"><button id="search">搜索</button></div>
     <section id="results" aria-live="polite"></section>
     <div class="actions"><button id="save" disabled>确认写入</button></div>
     <div id="message" aria-live="polite"></div>
   </main>
   <script>
-    const query = document.querySelector('#query'), search = document.querySelector('#search'), results = document.querySelector('#results'), save = document.querySelector('#save'), message = document.querySelector('#message');
+    const query = document.querySelector('#query'), search = document.querySelector('#search'), results = document.querySelector('#results'), save = document.querySelector('#save'), message = document.querySelector('#message'), runtime = document.querySelector('#runtime');
     let selected = null, timer;
     function show(text, kind = '') { message.textContent = text; message.className = kind; }
     async function runSearch() {
@@ -39,8 +41,10 @@
       } catch (error) { show(error.message, 'error'); }
     }
     function escapeHtml(value) { const node = document.createElement('span'); node.textContent = value; return node.innerHTML; }
+    async function checkRuntime() { try { const response = await fetch('/api/runtime-status'); const status = await response.json(); runtime.textContent = status.message; if (!status.ready) { runtime.classList.add('error'); search.disabled = true; query.disabled = true; if (!status.installed) { const command = document.createElement('code'); command.textContent = 'npm install -g @jackwener/opencli'; runtime.append(command); const link = document.createElement('a'); link.href = 'https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk'; link.target = '_blank'; link.rel = 'noreferrer'; link.textContent = '安装 OpenCLI Chrome 扩展'; runtime.append(link); } } } catch (_) { runtime.textContent = '无法检查 OpenCLI 运行环境'; runtime.classList.add('error'); } }
     search.onclick = runSearch; query.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(runSearch, 500); });
     save.onclick = async () => { if (!selected) return; save.disabled = true; try { const response = await fetch('/api/followings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(selected) }); const data = await response.json(); if (!response.ok) throw new Error(data.detail || '写入失败'); show(data.action === 'created' ? '已新增' : '已更新', 'success'); } catch (error) { show(error.message, 'error'); } finally { save.disabled = !selected; } };
+    checkRuntime();
   </script>
 </body>
 </html>

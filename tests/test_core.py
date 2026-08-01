@@ -2,10 +2,13 @@ import json
 import shutil
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from core.repositories.followings import save
 from core.up_search import _parse_items
 from core.utils.system.resources import resource_path
+from core.utils.system.process import find_opencli, run_opencli
+from core.utils.system.network import available_local_port
 
 
 class CoreTests(unittest.TestCase):
@@ -24,6 +27,31 @@ class CoreTests(unittest.TestCase):
 
     def test_source_resource_path_is_relative(self) -> None:
         self.assertEqual(resource_path("app/static"), Path("app/static"))
+
+    @patch("core.utils.system.process.shutil.which", return_value=None)
+    @patch("core.utils.system.process._candidate_paths")
+    def test_finds_opencli_outside_process_path(self, candidates, _which) -> None:
+        executable = self.root / "bin/opencli"
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.write_text("", encoding="utf-8")
+        candidates.return_value = [executable]
+        self.assertEqual(find_opencli(), executable)
+
+    @patch("core.utils.system.process.subprocess.run")
+    @patch("core.utils.system.process.find_opencli", return_value=Path("tmp/bin/opencli"))
+    def test_run_opencli_adds_executable_directory_to_path(self, _find, run) -> None:
+        run.return_value.returncode = 0
+        run_opencli(["--version"], timeout=5)
+        self.assertTrue(run.call_args.kwargs["env"]["PATH"].startswith("tmp/bin"))
+
+    @patch("core.utils.system.network.socket.socket")
+    def test_occupied_preferred_port_uses_available_port(self, socket_factory) -> None:
+        occupied = MagicMock()
+        available = MagicMock()
+        occupied.__enter__.return_value.bind.side_effect = OSError("occupied")
+        available.__enter__.return_value.getsockname.return_value = ("127.0.0.1", 54321)
+        socket_factory.side_effect = (occupied, available)
+        self.assertEqual(available_local_port(8765), 54321)
 
     def test_save_updates_existing_uid_and_rebuilds_markdown(self) -> None:
         first, action = save("123", "初始昵称", "第一行\n第二行", self.root)
