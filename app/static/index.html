@@ -3,64 +3,191 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BiliUp</title>
-  <style>
-    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; background: #f5f7fb; }
-    body { margin: 0; } main { width: min(680px, calc(100% - 32px)); margin: 12vh auto; }
-    h1 { margin-bottom: 6px; } p { color: #667085; } .search { display: flex; gap: 10px; margin: 28px 0 16px; }
-    input { flex: 1; padding: 12px; border: 1px solid #d0d5dd; border-radius: 8px; font: inherit; }
-    button { padding: 11px 16px; border: 0; border-radius: 8px; background: #2156d9; color: white; font: inherit; cursor: pointer; }
-    button:disabled { background: #98a2b3; cursor: default; } #results { max-height: 330px; overflow-y: auto; padding-right: 4px; scrollbar-gutter: stable; } .result { display: block; box-sizing: border-box; width: 100%; margin: 0 0 10px; padding: 14px; text-align: left; background: white; border: 1px solid #e4e7ec; color: #172033; }
-    .result:last-child { margin-bottom: 0; } .result.selected { border: 2px solid #2156d9; } .meta { display: -webkit-box; margin-top: 5px; overflow: hidden; color: #667085; font-size: 14px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; } .actions { margin: 0 0 12px; } #message { min-height: 24px; margin-top: 16px; } .error { color: #b42318; } .success { color: #027a48; }
-    .runtime { margin: 20px 0; padding: 14px; border-radius: 8px; background: #eef4ff; color: #3538cd; } .runtime.error { background: #fef3f2; color: #b42318; } .runtime code { display: block; margin: 10px 0; user-select: all; } .runtime a { color: inherit; }
-  </style>
+  <title>B站UP主视频管理</title>
+  <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-  <main>
-    <h1>BiliUp</h1>
-    <p>搜索并登记 B 站 UP 主</p>
-    <section id="setup" class="runtime" aria-live="polite">
-      <strong>设置视频知识库</strong>
-      <p>首次使用请选择一个用于保存视频与 UP 登记信息的目录。</p>
-      <button id="select-library" disabled>选择视频知识库目录</button>
-      <div id="setup-message"></div>
-    </section>
-    <section id="dashboard" hidden>
-      <div id="runtime" class="runtime">正在检查 OpenCLI…</div>
-      <div class="search"><input id="query" placeholder="输入 UP 主昵称" autocomplete="off" disabled><button id="search" disabled>搜索</button></div>
-      <div class="actions"><button id="save" disabled>确认写入</button></div>
-      <section id="results" aria-live="polite"></section>
-      <div id="message" aria-live="polite"></div>
-    </section>
-  </main>
+  <div id="app">
+    <header class="top-bar"><h1>B站UP主视频管理</h1></header>
+    <nav class="tabs" aria-label="功能页签">
+      <button class="tab active" data-tab="up-management" type="button" aria-current="page">
+        <svg class="tab-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 3a4 4 0 0 0-4 4v2a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2V7a4 4 0 0 0-4-4Z"/></svg>
+        UP主管理
+      </button>
+      <button class="tab" data-tab="video-download" type="button">
+        <svg class="tab-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M3 4.5A2.5 2.5 0 0 1 5.5 2h9A2.5 2.5 0 0 1 17 4.5v11a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 3 15.5v-11Z"/><path d="m6.25 10 2.1 2.1 5.4-5.4" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        UP主视频下载
+      </button>
+      <button class="tab" data-tab="other" type="button">其他功能</button>
+    </nav>
+
+    <main class="content">
+      <section id="setup" class="setup-card" aria-live="polite">
+        <h2>设置视频知识库</h2>
+        <p>首次使用请选择一个用于保存视频与 UP 登记信息的目录。</p>
+        <button class="btn btn-primary" id="select-library" type="button" disabled>选择视频知识库目录</button>
+        <div id="setup-message"></div>
+      </section>
+
+      <section id="dashboard" hidden>
+        <section class="tab-panel" data-panel="up-management">
+        <div class="toolbar" aria-label="UP主管理操作">
+          <button class="btn btn-primary" id="btn-add" type="button">
+            <svg class="btn-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 3a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3ZM10 8.5a5.5 5.5 0 0 0-5.5 5.5 1.5 1.5 0 0 1-3 0 7 7 0 0 1 7-7 5.5 5.5 0 0 1 5.5 5.5 1.5 1.5 0 0 1-3 0A5.5 5.5 0 0 0 10 8.5Z"/></svg>
+            添加
+          </button>
+          <button class="btn btn-danger" id="btn-delete" type="button" disabled>
+            <svg class="btn-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v1H6V3ZM5 4H3v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V4H5Z"/></svg>
+            删除
+          </button>
+          <button class="btn btn-dark" id="btn-sync" type="button" disabled>
+            <svg class="btn-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6.5A6 6 0 0 0 4.9 4.7L3.5 6.1M5.5 13.5A6 6 0 0 0 15.1 15.3l1.4-1.4M3.5 3.5v2.6h2.6M16.5 16.5v-2.6h-2.6"/></svg>
+            批量同步
+          </button>
+        </div>
+
+        <div class="table-container" id="up-table-container">
+          <table class="data-table" id="up-table">
+            <thead>
+              <tr>
+                <th class="col-check"><input type="checkbox" disabled aria-label="全选 UP 主"></th>
+                <th class="col-index">序号</th>
+                <th class="col-name">UP名称</th>
+                <th class="col-time">最后同步时间</th>
+                <th class="col-total">视频总数</th>
+                <th class="col-synced">已下载/已同步</th>
+                <th class="col-action">操作</th>
+              </tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+          <div class="empty-state" id="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M15.75 6a3.75 3.75 0 1 1-7.5 0ZM4.5 20.118a7.5 7.5 0 0 1 15 0"/></svg>
+            <p>暂无UP主数据，点击“添加”开始</p>
+          </div>
+        </div>
+        </section>
+
+        <section class="tab-panel" data-panel="video-download" hidden>
+          <div class="toolbar" aria-label="UP主视频下载操作">
+            <button class="btn btn-primary" id="btn-download" type="button">
+              <svg class="btn-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v9m0 0-3-3m3 3 3-3M4 16v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1"/></svg>
+              下载
+            </button>
+            <div class="toolbar-group">
+              <button class="btn btn-primary" id="btn-batch-track-video" type="button">批量追踪并下载</button>
+              <input class="track-date" id="track-since-date-video" type="date" title="起始日期">
+            </div>
+          </div>
+
+          <div class="table-container" id="video-list-container">
+            <div class="video-list-header">
+              <select class="up-selector" id="video-up-selector" aria-label="选择 UP 主">
+                <option value="">-- 选择UP主 --</option>
+              </select>
+              <h2>UP主视频列表</h2>
+            </div>
+            <table class="data-table" id="video-table">
+              <thead>
+                <tr>
+                  <th class="col-check"><input type="checkbox" disabled aria-label="全选视频"></th>
+                  <th class="col-index">编号</th>
+                  <th class="col-date">发布时间</th>
+                  <th class="col-title">视频名称</th>
+                  <th class="col-download">已下载</th>
+                  <th class="col-script">有字幕脚本</th>
+                </tr>
+              </thead>
+              <tbody id="video-table-body"></tbody>
+            </table>
+            <div class="empty-state">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
+              <p>暂无视频数据，请先选择UP主</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-panel other-features-panel" data-panel="other" hidden>
+          <article class="feature-card">
+            <h2>视频库位置</h2>
+            <p>设置独立的本地视频知识库。保存位置本身不会移动文件。</p>
+            <div class="feature-row library-root-row">
+              <input class="library-root-input" id="library-root" type="text" placeholder="选择视频库根目录">
+              <div class="feature-actions">
+                <button class="btn btn-primary" id="btn-save-library-root" type="button">保存位置</button>
+                <button class="btn btn-primary" id="btn-open-library-folder" type="button">打开保存目录</button>
+              </div>
+            </div>
+          </article>
+          <article class="feature-card">
+            <h2>单视频下载</h2>
+            <p>输入 B 站完整链接、b23.tv 短链接或 BV 号。未管理作者的视频会保存到视频库的 OtherVideos。</p>
+            <div class="feature-row single-video-row">
+              <input class="single-video-input" id="single-video-url" type="text" placeholder="粘贴 B 站视频链接或 BV 号">
+              <div class="feature-actions">
+                <button class="btn btn-primary" id="btn-single-download" type="button">下载此视频</button>
+                <button class="btn btn-primary" id="btn-open-single-folder" type="button">打开单视频保存目录</button>
+              </div>
+            </div>
+          </article>
+        </section>
+      </section>
+    </main>
+  </div>
+
   <script>
-    const setup = document.querySelector('#setup'), setupMessage = document.querySelector('#setup-message'), selectLibrary = document.querySelector('#select-library'), dashboard = document.querySelector('#dashboard'), query = document.querySelector('#query'), search = document.querySelector('#search'), results = document.querySelector('#results'), save = document.querySelector('#save'), message = document.querySelector('#message'), runtime = document.querySelector('#runtime');
-    let selected = null, runtimeReady = false;
-    function show(text, kind = '') { message.textContent = text; message.className = kind; }
+    const setup = document.querySelector('#setup');
+    const dashboard = document.querySelector('#dashboard');
+    const selectLibrary = document.querySelector('#select-library');
+    const setupMessage = document.querySelector('#setup-message');
+    const tabs = document.querySelectorAll('.tab');
+    const panels = document.querySelectorAll('.tab-panel');
+
     function showSetup(text, kind = '') { setupMessage.textContent = text; setupMessage.className = kind; }
-    function setSearching(searching) { search.disabled = searching || !runtimeReady; search.textContent = searching ? '搜索中…' : '搜索'; }
-    async function responseData(response) { const text = await response.text(); try { return JSON.parse(text); } catch (_) { throw new Error(response.ok ? '服务返回的数据格式不正确' : '服务请求失败，请重试'); } }
-    function showDashboard() { setup.hidden = true; dashboard.hidden = false; checkRuntime(); }
-    async function runSearch() {
-      const nickname = query.value.trim(); selected = null; save.disabled = true; results.innerHTML = '';
-      if (!nickname) { setSearching(false); return; }
-      setSearching(true);
-      show('搜索中…');
-      try {
-        const response = await fetch('/api/up-search', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nickname}) });
-        const data = await responseData(response); if (!response.ok) throw new Error(data.detail || '搜索失败');
-        if (!data.length) { show('未找到匹配的 UP 主'); return; }
-        show(''); data.forEach(item => { const button = document.createElement('button'); button.className = 'result'; button.innerHTML = `<strong>${escapeHtml(item.nickname)}</strong><span class="meta">UP ID：${escapeHtml(item.uid)} · ${escapeHtml(item.bio || '-')}</span>`; button.onclick = () => { document.querySelectorAll('.result').forEach(node => node.classList.remove('selected')); button.classList.add('selected'); selected = item; save.disabled = false; show(''); }; results.append(button); });
-      } catch (error) { show(error.message, 'error'); }
-      finally { setSearching(false); }
+    async function responseData(response) {
+      const text = await response.text();
+      try { return JSON.parse(text); }
+      catch (_) { throw new Error(response.ok ? '服务返回的数据格式不正确' : '服务请求失败，请重试'); }
     }
-    function escapeHtml(value) { const node = document.createElement('span'); node.textContent = value; return node.innerHTML; }
-    async function checkRuntime() { try { const response = await fetch('/api/runtime-status'); const status = await responseData(response); runtimeReady = Boolean(status.ready); setSearching(false); query.disabled = !runtimeReady; runtime.textContent = status.message; if (!status.ready) { runtime.classList.add('error'); if (!status.installed) { const command = document.createElement('code'); command.textContent = 'npm install -g @jackwener/opencli'; runtime.append(command); const link = document.createElement('a'); link.href = 'https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk'; link.target = '_blank'; link.rel = 'noreferrer'; link.textContent = '安装 OpenCLI Chrome 扩展'; runtime.append(link); } } } catch (_) { runtimeReady = false; setSearching(false); query.disabled = true; runtime.textContent = '无法检查 OpenCLI 运行环境'; runtime.classList.add('error'); } }
-    async function checkSetup() { try { const response = await fetch('/api/setup-status'); const status = await responseData(response); if (status.configured) { showDashboard(); return; } showSetup(status.message); selectLibrary.disabled = false; } catch (error) { showSetup(error.message, 'error'); } }
-    async function selectKnowledgeBase() { selectLibrary.disabled = true; selectLibrary.textContent = '正在打开目录选择器…'; showSetup(''); try { const response = await fetch('/api/setup/select-library', { method: 'POST' }); const data = await responseData(response); if (!response.ok) throw new Error(data.detail || '设置失败'); if (data.cancelled) { showSetup(data.message); return; } showDashboard(); } catch (error) { showSetup(error.message, 'error'); } finally { if (!setup.hidden) { selectLibrary.disabled = false; selectLibrary.textContent = '选择视频知识库目录'; } } }
-    search.onclick = runSearch;
-    save.onclick = async () => { if (!selected) return; save.disabled = true; try { const response = await fetch('/api/followings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(selected) }); const data = await responseData(response); if (!response.ok) throw new Error(data.detail || '写入失败'); show(data.action === 'created' ? '已新增' : '已更新', 'success'); } catch (error) { show(error.message, 'error'); } finally { save.disabled = !selected; } };
+    function showDashboard() { setup.hidden = true; dashboard.hidden = false; }
+    function switchTab(tabName) {
+      tabs.forEach((tab) => {
+        const active = tab.dataset.tab === tabName;
+        tab.classList.toggle('active', active);
+        tab.toggleAttribute('aria-current', active);
+      });
+      panels.forEach((panel) => { panel.hidden = panel.dataset.panel !== tabName; });
+    }
+    async function checkSetup() {
+      try {
+        const response = await fetch('/api/setup-status');
+        const status = await responseData(response);
+        if (status.configured) { showDashboard(); return; }
+        showSetup(status.message);
+        selectLibrary.disabled = false;
+      } catch (error) { showSetup(error.message, 'error'); }
+    }
+    async function selectKnowledgeBase() {
+      selectLibrary.disabled = true;
+      selectLibrary.textContent = '正在打开目录选择器…';
+      showSetup('');
+      try {
+        const response = await fetch('/api/setup/select-library', { method: 'POST' });
+        const data = await responseData(response);
+        if (!response.ok) throw new Error(data.detail || '设置失败');
+        if (data.cancelled) { showSetup(data.message); return; }
+        showDashboard();
+      } catch (error) { showSetup(error.message, 'error'); }
+      finally {
+        if (!setup.hidden) {
+          selectLibrary.disabled = false;
+          selectLibrary.textContent = '选择视频知识库目录';
+        }
+      }
+    }
+
     selectLibrary.onclick = selectKnowledgeBase;
+    tabs.forEach((tab) => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
     checkSetup();
   </script>
 </body>

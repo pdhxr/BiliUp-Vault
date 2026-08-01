@@ -35,16 +35,22 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["configured"])
 
-    def test_dashboard_places_save_before_scrollable_results(self) -> None:
+    def test_dashboard_contains_all_static_tabs(self) -> None:
         response = self.client.get("/")
         html = response.text
-        self.assertLess(html.index('id="save"'), html.index('id="results"'))
-        self.assertIn("#results { max-height: 330px; overflow-y: auto;", html)
-        self.assertIn("search.textContent = searching ? '搜索中…' : '搜索';", html)
-        self.assertIn("search.onclick = runSearch;", html)
-        self.assertNotIn("query.addEventListener('input'", html)
         self.assertIn('id="setup"', html)
         self.assertIn("checkSetup();", html)
+        self.assertIn('data-tab="up-management"', html)
+        self.assertIn('id="btn-add"', html)
+        self.assertIn('id="up-table"', html)
+        self.assertIn('data-tab="video-download"', html)
+        self.assertIn('id="video-table"', html)
+        self.assertIn('data-tab="other"', html)
+        self.assertIn('id="single-video-url"', html)
+        self.assertIn("function switchTab", html)
+        style = self.client.get("/static/css/style.css")
+        self.assertEqual(style.status_code, 200)
+        self.assertIn(".top-bar", style.text)
 
     @patch("app.routes.up.save_following", return_value=({"uid": "1"}, "created"))
     def test_following_route(self, _save) -> None:
