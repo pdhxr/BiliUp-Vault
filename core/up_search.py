@@ -35,7 +35,10 @@ def _parse_items(output: str) -> list[dict[str, str]]:
 
 def search_up(nickname: str) -> list[dict[str, str]]:
     try:
-        result = run_opencli(["bilibili", "search", nickname, "--type", "user", "-f", "json"], timeout=30)
+        result = run_opencli(
+            ["bilibili", "search", nickname, "--type", "user", "-f", "json", "--window", "background"],
+            timeout=30,
+        )
     except FileNotFoundError as exc:
         raise OpenCliSearchError("未找到 OpenCLI，请先安装并配置 OpenCLI") from exc
     except subprocess.TimeoutExpired as exc:

@@ -1,0 +1,229 @@
+"""批量追踪并下载任务编排。
+
+这里串联两个已有用例：先按截止日期增量同步各个 UP，再只下载本轮新增视频。
+路由层和静态网页层只通过状态快照与本模块交互。
+"""
+
+from datetime import datetime
+from threading import Lock, Thread
+import time
+
+from core.configuration import batch_track_since_date, knowledge_base_root
+from core.download_progress import get_progress
+from core.repositories.followings import find
+from core.video_download import queue_downloads
+from core.video_errors import FollowingNotFoundError
+from core.video_sync import refresh_up_videos_with_details
+
+
+_state: dict[str, object] = {
+    "running": False,
+    "phase": "idle",
+    "total": 0,
+    "done": 0,
+    "current_up": "",
+    "current_up_id": "",
+    "since_date": "",
+    "added_total": 0,
+    "download_total": 0,
+    "download_done": 0,
+    "download_failed": 0,
+    "errors": 0,
+    "started_at": "",
+    "finished_at": "",
+    "results": [],
+}
+_state_lock = Lock()
+_cancel_requested = False
+_DOWNLOAD_WAIT_SECONDS = 7200
+
+
+def _now() -> str:
+    return datetime.now().astimezone().isoformat()
+
+
+def _date_key(value: object) -> str:
+    return "".join(character for character in str(value or "") if character.isdigit())[:8]
+
+
+def _copy_state_unlocked() -> dict[str, object]:
+    return {
+        key: [dict(item) if isinstance(item, dict) else item for item in value]
+        if key == "results" and isinstance(value, list)
+        else value
+        for key, value in _state.items()
+    }
+
+
+def _copy_state() -> dict[str, object]:
+    with _state_lock:
+        return _copy_state_unlocked()
+
+
+def _set(**values: object) -> None:
+    with _state_lock:
+        _state.update(values)
+
+
+def _append_error(result: dict[str, object], message: str) -> None:
+    result["status"] = "error"
+    result["error"] = message
+    with _state_lock:
+        _state["errors"] = int(_state["errors"]) + 1
+
+
+def start_batch_track_download(up_ids: list[str], since_date: str = "") -> dict[str, object]:
+    """启动后台批量追踪下载；同一时间只允许一个任务运行。"""
+    ids = list(dict.fromkeys(str(value).strip() for value in up_ids if str(value).strip()))
+    if not ids:
+        raise ValueError("至少选择一个 UP 主")
+    configured_since_date = since_date.strip() or batch_track_since_date()
+    cutoff = _date_key(configured_since_date)
+    if len(cutoff) != 8:
+        raise ValueError("请先在视频下载页设置批量追踪起始日期")
+    with _state_lock:
+        if _state["running"]:
+            return {"status": "busy", "current": _copy_state_unlocked()}
+
+    root = knowledge_base_root()
+    queue: list[dict[str, str]] = []
+    skipped_ids: list[str] = []
+    for uid in ids:
+        following = find(uid, root / "UpList")
+        if following is None:
+            raise FollowingNotFoundError(f"未找到 UP {uid}")
+        if not bool(following.get("scheduled_tracking", False)):
+            skipped_ids.append(uid)
+            continue
+        queue.append({"up_id": uid, "nickname": str(following.get("nickname", uid))})
+    if not queue:
+        raise ValueError("选中的 UP 主均未启用自动追踪下载")
+
+    with _state_lock:
+        if _state["running"]:
+            return {"status": "busy", "current": _copy_state_unlocked()}
+        _state.update({
+            "running": True,
+            "phase": "tracking",
+            "total": len(queue),
+            "done": 0,
+            "current_up": "",
+            "current_up_id": "",
+            "since_date": cutoff,
+            "added_total": 0,
+            "download_total": 0,
+            "download_done": 0,
+            "download_failed": 0,
+            "errors": 0,
+            "started_at": _now(),
+            "finished_at": "",
+            "results": [],
+        })
+    global _cancel_requested
+    _cancel_requested = False
+    Thread(target=_run, args=(queue, cutoff), name="biliup-track-download", daemon=True).start()
+    return {"status": "started", "total": len(queue), "since_date": cutoff, "skipped_ids": skipped_ids}
+
+
+def _run(queue: list[dict[str, str]], since_date: str) -> None:
+    global _cancel_requested
+    results: list[dict[str, object]] = []
+    try:
+        for item in queue:
+            uid = item["up_id"]
+            nickname = item["nickname"]
+            result: dict[str, object] = {
+                "up_id": uid,
+                "nickname": nickname,
+                "added": 0,
+                "new_videos": [],
+                "download_jobs": [],
+                "status": "ok",
+            }
+            _set(current_up=nickname, current_up_id=uid)
+            if _cancel_requested:
+                result["status"] = "cancelled"
+                results.append(result)
+                with _state_lock:
+                    _state["results"] = list(results)
+                    _state["done"] = int(_state["done"]) + 1
+                continue
+            try:
+                details = refresh_up_videos_with_details(uid, since_date=since_date)
+                new_videos = [
+                    {
+                        "bvid": str(video.get("bvid", "")).strip(),
+                        "title": str(video.get("title", "")),
+                        "date": str(video.get("date") or video.get("pub_time") or ""),
+                    }
+                    for video in details["new_videos"]
+                    if str(video.get("bvid", "")).strip()
+                ]
+                result["added"] = len(new_videos)
+                result["new_videos"] = new_videos
+                with _state_lock:
+                    _state["added_total"] = int(_state["added_total"]) + len(new_videos)
+            except Exception as exc:
+                _append_error(result, str(exc))
+            results.append(result)
+            with _state_lock:
+                _state["results"] = list(results)
+                _state["done"] = int(_state["done"]) + 1
+
+        download_tasks: list[tuple[str, str]] = []
+        _set(phase="downloading", current_up="", current_up_id="")
+        for result in results:
+            if result.get("status") != "ok":
+                continue
+            videos = result.get("new_videos", [])
+            bvids = [str(video.get("bvid", "")) for video in videos if str(video.get("bvid", ""))]
+            if not bvids:
+                continue
+            uid = str(result["up_id"])
+            try:
+                jobs = queue_downloads(uid, bvids)
+                result["download_jobs"] = jobs
+                download_tasks.extend((str(job.get("bvid", "")), uid) for job in jobs if job.get("bvid"))
+            except Exception as exc:
+                _append_error(result, str(exc))
+            with _state_lock:
+                _state["results"] = list(results)
+
+        download_bvids = list(dict.fromkeys(bvid for bvid, _ in download_tasks))
+        _set(download_total=len(download_bvids))
+        _wait_for_downloads(download_bvids)
+        for result in results:
+            jobs = result.get("download_jobs", [])
+            if not isinstance(jobs, list):
+                continue
+            statuses = [get_progress(str(job.get("bvid", ""))).get("status") for job in jobs]
+            if any(status == "failed" for status in statuses):
+                result["status"] = "error"
+            elif statuses and all(status == "success" for status in statuses):
+                result["status"] = "ok"
+        _set(results=list(results))
+    finally:
+        _set(running=False, phase="completed", current_up="", current_up_id="", finished_at=_now())
+
+
+def _wait_for_downloads(bvids: list[str]) -> None:
+    unique_bvids = list(dict.fromkeys(bvids))
+    if not unique_bvids:
+        _set(download_done=0, download_failed=0)
+        return
+    deadline = time.monotonic() + _DOWNLOAD_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        statuses = [get_progress(bvid).get("status") for bvid in unique_bvids]
+        done = sum(status in {"success", "failed"} for status in statuses)
+        failed = sum(status == "failed" for status in statuses)
+        _set(download_done=done, download_failed=failed)
+        if done == len(unique_bvids):
+            return
+        time.sleep(0.5)
+    with _state_lock:
+        _state["errors"] = int(_state["errors"]) + 1
+    _set(download_done=len(unique_bvids), download_failed=len(unique_bvids))
+
+
+def batch_track_download_progress() -> dict[str, object]:
+    return _copy_state()

@@ -4,7 +4,7 @@
 
 用户需要在本地快速检索 B 站 UP 主，并把确认后的 UP 主信息登记到用户自行选择的视频知识库中，供后续视频追踪能力使用。
 
-本 MVP 的目标是完成“搜索 → 选择 → 写入 → 反馈”的单一闭环；应用在 macOS 和 Windows 上以相同功能运行。
+本 MVP 的目标是完成知识库初始化、UP 主信息登记、视频列表刷新与选中视频下载；应用在 macOS 和 Windows 上以相同功能运行。
 
 ## 2. 范围
 
@@ -17,22 +17,31 @@
 5. 用户一次只能选择一个候选结果并确认写入。
 6. 系统创建或更新知识库内的 UpList，并提示结果。
 7. 首次运行检测 OpenCLI；未安装或不可运行时展示明确的准备步骤并暂时禁用搜索。
+8. “UP 主管理”页签读取当前知识库中的登记记录，并按参考页面展示管理列表。
+9. 用户可以刷新已登记 UP 的视频信息列表。
+10. 用户可以在第二个页签选择 UP、选择视频并下载到知识库的视频目录。
+11. 用户可以填写起始日期，对勾选的 UP（未勾选时使用当前视频页 UP）执行批量追踪，并自动下载本轮新增视频。
 
 ### 不包含
 
-- UP 主视频列表、视频下载、下载状态、字幕、转录、定时追踪、登录、迁移、云同步和文件整理。
-- 头像展示、批量选择/批量写入、删除、编辑和排序功能。
-- 参考工作流中每位 UP 的视频 `.jsonl` 或 Markdown 视频记录。
+- 字幕、转录、定时追踪、登录、迁移、云同步和文件整理。
+- 头像展示、批量写入、编辑和排序功能。
+- 参考工作流中与本 MVP 无关的旧版 Markdown 视频记录。
 
 ## 3. 用户流程
 
 1. 用户打开本地 WebUI。若尚未配置知识库，网页只显示目录选择页。
 2. 用户点击“选择视频知识库目录”，在系统原生目录选择器中选择一个已存在、可写的目录。
 3. 系统保存配置后显示搜索看板。
-4. 用户在搜索框输入昵称并点击“搜索”；输入过程不自动调用接口。
-5. 系统显示匹配项的昵称、UP ID 与简介；没有结果时显示“未找到匹配的 UP 主”。
-6. 用户单选一项并点击确认写入。
-7. 系统按 UP ID 写入或更新 UpList，显示“已新增”或“已更新”；失败时显示简短错误信息，不写入半成品数据。
+4. 系统打开“UP 主管理”页签，读取已登记的 UP 主并按序号、昵称、UP 简介、最后同步时间、视频总数、已下载/已同步和操作列展示；没有记录时显示空状态。
+5. 用户在搜索框输入昵称并点击“搜索”；输入过程不自动调用接口。
+6. 系统显示匹配项的昵称、UP ID 与简介；没有结果时显示“未找到匹配的 UP 主”。
+7. 用户单选一项并点击确认写入。
+8. 系统按 UP ID 写入或更新 UpList，显示“已新增”或“已更新”；失败时显示简短错误信息，不写入半成品数据。
+9. 用户在 UP 管理列表中点击行操作或批量刷新，从 OpenCLI 获取该 UP 的视频列表并保存索引。
+10. 用户勾选一个或多个 UP，点击“删除”并确认；系统删除登记和视频索引，但保留已下载视频文件。
+11. 用户切换到视频下载页签，选择 UP 和视频，点击下载；系统后台执行下载并反馈成功或失败状态。
+12. 用户填写起始日期并点击“批量追踪并下载”；系统先逐个追踪选定 UP 在该日期之后的新视频，再只下载本轮新发现的视频，并持续反馈两个阶段的进度。
 
 ## 4. 功能需求
 
@@ -41,6 +50,7 @@
 - 搜索输入按去除首尾空白后的昵称处理。
 - `POST /api/up-search` 接收昵称，返回 `uid`、`nickname`、`bio`。
 - `core` 层通过 OpenCLI 执行用户搜索并标准化结果；网页和 FastAPI 路由不直接执行命令。
+- 搜索、视频刷新和视频下载调用 OpenCLI 时使用后台浏览器窗口模式，不抢占用户前台；仍复用用户已登录的 Chrome 会话。
 - OpenCLI 无结果、超时或返回不可解析数据时，系统返回可理解的失败信息。
 - 已安装 OpenCLI 时，打包应用必须在 Finder/Explorer 启动环境中正确定位它；未安装时不得只返回笼统错误。
 
@@ -51,23 +61,73 @@
 - 所选目录必须已经存在且可写；验证失败时不创建半成品配置。
 - 配置文件固定在 macOS `~/Library/Application Support/BiliUp/config.json` 或 Windows `%LOCALAPPDATA%\BiliUp\config.json`。
 - 配置中的 `knowledge_base_root` 保存用户选择的绝对路径。它是用户选择的受控例外，不得由业务代码硬编码。
+- 同一个配置文件预留并保存 `batch_track_since_date`，用于批量追踪并下载的起始日期；日期使用 `YYYY-MM-DD`，未设置时为空。
 
-### 4.3 选择与确认
+### 4.3 UP 主管理列表
+
+- `GET /api/followings` 读取当前配置的 `<knowledge_base_root>/UpList/followings.json`，返回按登记顺序排列的列表。
+- `POST /api/followings/tracking` 接收 `up_id` 和 `scheduled_tracking`，立即更新对应的 `followings.json` 记录。
+- 每行返回 `up_id`、`nickname`、`bio`、`scheduled_tracking`、`last_sync_time`、`total_count`、`synced_count` 和 `downloaded_count`；表格展示昵称、简介、自动追踪下载、时间和统计列，`up_id` 用于后续视频接口。
+- 页面列顺序为：选择框、序号、UP 名称、UP 简介、自动追踪下载、最后同步时间、视频总数、已下载/已同步、操作。
+- 表头总复选框与每行选择框双向联动；部分行选中时显示半选状态。批量同步只处理当前勾选的 UP。
+- `followings.json` 中没有视频统计字段时，统计列显示为 `0 / 0`，最后同步时间显示为 `-`。
+- 自动追踪下载开关变更后立即保存到当前知识库的 `UpList/followings.json`；只有管理页当前勾选且 `scheduled_tracking=true` 的 UP 才能进入批量追踪并下载。
+- 列表读取失败时不修改本地数据，页面显示可理解的错误信息。
+- 行同步调用视频列表刷新接口；批量同步只处理当前勾选的 UP，并按 BV 号增量合并新视频、保留已有下载状态。
+- 删除按钮只对当前勾选的 UP 生效；确认后移除 `followings.json` 登记和对应 `UpList/<UP名称>.jsonl` 远端追踪清单，不删除 `SortedMp4/<UP名称>/videos.jsonl` 与实际视频文件。
+- 批量同步执行期间显示“同步中…”并禁用所有行同步按钮；批量同步按钮保持可用，重复提交由后端返回任务进行中的状态。
+
+### 4.4 视频列表刷新
+
+- `POST /api/up/{up_id}/videos/refresh` 从 `page=1` 开始按时间倒序分页调用 `opencli bilibili user-videos <uid> -f json --limit 50 --page <n>`，最多查询 5 页。
+- 每页按 BV 号与本地索引增量去重；每次最多新增 20 条，连续两页没有新增或遇到不足一页时停止。新视频合并到 `<knowledge_base_root>/UpList/<UP名称>.jsonl`，保留已下载状态。
+- `GET /api/up/{up_id}/videos` 返回本地索引，按发布时间倒序，并提供序号、日期、标题、BV 号、链接和下载状态。
+- 刷新成功后更新 `followings.json` 的 `total_count`、`synced_count`、`downloaded_count` 和 `last_sync_at`。
+- OpenCLI 不可用、超时或数据不可解析时不破坏已有视频索引，并返回可理解的错误。
+- `POST /api/up/videos/batch-refresh` 接收选中的 `up_ids`，后台串行执行上述渐进同步；`GET /api/up/videos/batch-refresh-progress` 返回完成数、当前 UP、新增数和失败数。
+
+### 4.5 视频下载
+
+- `POST /api/videos/download` 接收 `up_id` 和一个或多个 `bvids`，后台提交下载任务。
+- 下载调用 `opencli bilibili download <bvid> --output <知识库目录>/SortedMp4/<UP名称>/<YYYYMM>/`。
+- 下载依赖用户单独安装的 `yt-dlp`。后台按 `best`、`720p`、`480p` 顺序最多重试 3 次；OpenCLI 返回失败状态时显示其简要错误，若实际生成有效视频文件则仍按成功处理。
+- 下载任务通过 `GET /api/videos/download-progress` 查询状态；成功后更新远端追踪清单的下载状态，并在本地 `SortedMp4/<UP名称>/videos.jsonl` 登记相对文件路径、大小和扫描时间。
+- 第二个页签实时轮询并展示下载汇总和任务列表，至少显示视频标题、排队中/下载中/完成/失败状态；下载过程中显示已发现的文件大小，失败项显示错误提示。
+- `GET/PUT /api/settings/batch-track` 读写应用 `config.json` 中的 `batch_track_since_date`。视频下载页打开时读取该值，用户选择日期后立即保存。
+- “批量追踪并下载”接收管理页选中的 `up_ids`；追踪起始日期从应用配置读取（仍兼容请求中的 `since_date` 字段）。日期支持 `YYYY-MM-DD`，按自然日包含当天；追踪按 B 站发布时间倒序分页，遇到早于起始日期的页面边界后停止。只把本轮新发现的 BV 号提交下载，不重复提交已登记视频。
+- 批量任务分为 `tracking` 和 `downloading` 两阶段，状态接口返回 `current_up`、`done/total`、`added_total`、`download_done/download_total`、`download_failed` 与错误计数；执行期间只禁用行刷新按钮，批量同步和批量追踪按钮保持可用，缺少必要条件时点击后显示提示。
+- 下载进度记录在后台保留最多 30 分钟，前端允许隐藏进度面板；隐藏不会停止后台下载。
+- 同一 UP 的下载文件按 `<UP名称>_<日期>_<标题>.<扩展名>` 保存；文件名中的跨平台非法字符统一替换。
+- 下载失败不修改已下载标记；不实现字幕、转录或重新编码。
+
+### 4.6 UP 删除
+
+- `POST /api/followings/delete` 接收 `up_ids`，删除选中的 UP 登记。
+- 删除同时移除对应的 `<knowledge_base_root>/UpList/<UP名称>.jsonl` 远端追踪清单，并重建 `bilibili-up-followings.md`；本地视频库索引和实际文件保留。
+- 删除不触碰 `<knowledge_base_root>/SortedMp4/<UP名称>/` 下的实际视频文件。
+- 前端删除前必须显示确认提示；删除期间按钮不可重复提交。
+
+### 4.7 选择与确认
 
 - 搜索结果只能单选。
 - 未选择结果时，确认按钮不可写入。
 - 用户确认后，前端发送选定的 `uid`、`nickname`、`bio` 到 `POST /api/followings`。
 
-### 4.4 本地写入
+- `POST /api/followings` 写入登记后立即执行一次首批视频刷新；成功时响应包含 `video_sync.video_count`，前端显示初始视频数。OpenCLI 首次刷新失败不回滚登记，响应包含可重试的 `video_sync.message`。
+
+### 4.8 本地写入
 
 数据根目录为配置的 `knowledge_base_root`；当前 UP 数据相对该根目录保存到 `UpList/`。
 
 - `<knowledge_base_root>/UpList/followings.json` 是唯一真源，为按添加顺序保存的 JSON 数组。
-- 每条记录包含：`uid`、`nickname`、`bio`、`scheduled_tracking`、`created_at`、`last_sync_at`。
+- 每条记录包含：`uid`、`nickname`、`bio`、`scheduled_tracking`、`created_at`、`last_sync_at`、`total_count`、`synced_count`、`downloaded_count`。
 - `uid` 是唯一键。新 UID 追加记录；已有 UID 仅更新昵称和简介，保留原 `created_at`。
 - 空简介保存为 `-`。新记录的 `scheduled_tracking` 为 `true`；`created_at` 与 `last_sync_at` 使用当前带时区的 ISO-8601 时间，以兼容参考格式。
 - 写入使用独占锁与原子替换，确保失败不会破坏已有 JSON。
 - 写入 JSON 成功后，重建 `<knowledge_base_root>/UpList/bilibili-up-followings.md`：表头固定为“序号、昵称、UP ID、简介”，序号从 1 连续递增。Markdown 只是派生视图，不能作为写入源。
+- 远端视频追踪清单使用 `<knowledge_base_root>/UpList/<UP名称>.jsonl`，每行包含 `date`、`title`、`bvid`、`url`、`downloaded`、`transcript`、`local_filename` 和 `index`。
+- 本地视频库使用 `<knowledge_base_root>/SortedMp4/<UP名称>/videos.jsonl`，只有真实存在且大小大于零的视频才写入，每行包含 `bvid`、`date`（YYYYMMDD）、`title`、`relative_path`、`original_filename`、`size_bytes`、`transcript`、`scanned_at` 和 `index`。
+- 视频文件写入 `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`，文件名为 `<UP名称>_<YYYYMMDD>_<标题>.<扩展名>`；`relative_path` 始终相对知识库根目录。
 
 ## 5. 非功能需求
 
@@ -81,13 +141,20 @@
 
 1. 未配置时只能选择知识库目录；取消选择或不可写目录不生成配置。
 2. 配置成功后，`UpList` 只写入用户选择的知识库目录，不写入安装包或启动目录。
-3. 输入昵称后，用户能看到包含昵称、UP ID、简介的搜索结果或无结果提示。
-4. 不选择结果时不能写入；选择一项并确认后产生明确成功或失败反馈。
-5. 首次写入创建正确的 JSON 记录和 Markdown 表；相同 UID 再次写入不会产生重复记录。
-6. `followings.json` 写入失败时，原文件仍可读取且内容未损坏。
-7. macOS 与 Windows 均通过相同自动化测试；涉及启动或打包的改动在两个系统分别验证。
-8. 未安装 OpenCLI 时首页显示安装、Chrome 扩展和 B 站登录指引；安装完成后无需修改业务代码即可被识别。
+3. 已登记的 UP 主能在“UP 主管理”页签按参考页面列结构显示；无记录时显示空状态。
+4. 输入昵称后，用户能看到包含昵称、UP ID、简介的搜索结果或无结果提示。
+5. 不选择结果时不能写入；选择一项并确认后产生明确成功或失败反馈。
+6. 首次写入创建正确的 JSON 记录和 Markdown 表，并立即完成首批视频同步；相同 UID 再次写入不会产生重复记录。
+7. 刷新已登记 UP 后，`UpList/<UP名称>.jsonl` 远端追踪清单产生或更新；已有本地视频同步补建到 `SortedMp4/<UP名称>/videos.jsonl`，列表统计同步更新。
+8. 第二个页签能读取本地视频索引、单选或多选视频并提交下载任务。
+9. 下载成功后视频文件位于知识库的 `SortedMp4/<UP名称>/<YYYYMM>/`，列表显示已下载。
+10. 下载期间第二个页签能够实时显示任务标题、当前状态和已下载大小；任务完成或失败后仍显示结果，直至记录过期或用户隐藏。
+11. 填写起始日期并执行批量追踪后，系统只追踪不早于该日期且尚未登记的视频，并自动提交这些视频的下载任务；页面能显示追踪阶段和下载阶段的进度，完成后刷新视频列表与 UP 统计。
+12. 删除选中的 UP 后，登记和 `UpList/<UP名称>.jsonl` 远端追踪清单消失；`SortedMp4/<UP名称>/videos.jsonl` 与实际视频文件仍存在。
+13. `followings.json` 或视频索引写入失败时，原文件仍可读取且内容未损坏。
+14. macOS 与 Windows 均通过相同自动化测试；涉及启动或打包的改动在两个系统分别验证。
+15. 未安装 OpenCLI 时首页显示安装、Chrome 扩展和 B 站登录指引；安装完成后无需修改业务代码即可被识别。
 
 ## 7. 参考边界
 
-参考工作流说明了后续“UP 主视频追踪”如何以 UpList 为输入。本 PRD 仅采用其 UP 主信息保存需求，不采用其中旧版 Markdown 视频记录、视频下载、转录或调度流程。
+参考工作流说明了 UP 主视频列表、删除登记和下载的行为边界。本 PRD 采用其 OpenCLI 用户视频查询与下载命令，不采用字幕、转录、调度、迁移和旧版 Markdown 视频记录流程。

@@ -40,19 +40,22 @@
             <svg class="btn-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v1H6V3ZM5 4H3v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V4H5Z"/></svg>
             删除
           </button>
-          <button class="btn btn-dark" id="btn-sync" type="button" disabled>
+          <button class="btn btn-dark" id="btn-sync" type="button">
             <svg class="btn-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6.5A6 6 0 0 0 4.9 4.7L3.5 6.1M5.5 13.5A6 6 0 0 0 15.1 15.3l1.4-1.4M3.5 3.5v2.6h2.6M16.5 16.5v-2.6h-2.6"/></svg>
             批量同步
           </button>
+          <span id="up-feedback" class="up-feedback" aria-live="polite"></span>
         </div>
 
         <div class="table-container" id="up-table-container">
           <table class="data-table" id="up-table">
             <thead>
               <tr>
-                <th class="col-check"><input type="checkbox" disabled aria-label="全选 UP 主"></th>
+                <th class="col-check"><input type="checkbox" id="check-all-ups" disabled aria-label="全选 UP 主"></th>
                 <th class="col-index">序号</th>
                 <th class="col-name">UP名称</th>
+                <th class="col-bio">UP简介</th>
+                <th class="col-tracking">自动追踪下载</th>
                 <th class="col-time">最后同步时间</th>
                 <th class="col-total">视频总数</th>
                 <th class="col-synced">已下载/已同步</th>
@@ -70,27 +73,38 @@
 
         <section class="tab-panel" data-panel="video-download" hidden>
           <div class="toolbar" aria-label="UP主视频下载操作">
-            <button class="btn btn-primary" id="btn-download" type="button">
+            <button class="btn btn-primary" id="btn-download" type="button" disabled>
               <svg class="btn-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v9m0 0-3-3m3 3 3-3M4 16v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1"/></svg>
               下载
             </button>
             <div class="toolbar-group">
               <button class="btn btn-primary" id="btn-batch-track-video" type="button">批量追踪并下载</button>
+              <label class="track-date-label" for="track-since-date-video">起始日期</label>
               <input class="track-date" id="track-since-date-video" type="date" title="起始日期">
+              <span class="track-date-status" id="track-date-status" aria-live="polite"></span>
             </div>
+            <div class="download-progress-panel hidden" id="download-progress-panel" aria-live="polite">
+              <span class="progress-title">下载进度</span>
+              <span class="progress-status-text" id="progress-status-text"></span>
+              <button class="progress-clear" id="progress-clear" type="button" title="隐藏进度">×</button>
+            </div>
+          </div>
+          <div class="progress-list-dropdown" id="progress-list-dropdown" hidden>
+            <div class="progress-list" id="progress-list"></div>
           </div>
 
           <div class="table-container" id="video-list-container">
             <div class="video-list-header">
-              <select class="up-selector" id="video-up-selector" aria-label="选择 UP 主">
+              <select class="up-selector" id="video-up-selector" aria-label="选择 UP 主" disabled>
                 <option value="">-- 选择UP主 --</option>
               </select>
               <h2>UP主视频列表</h2>
+              <button class="btn btn-secondary" id="btn-refresh-videos" type="button" disabled>刷新列表</button>
             </div>
             <table class="data-table" id="video-table">
               <thead>
                 <tr>
-                  <th class="col-check"><input type="checkbox" disabled aria-label="全选视频"></th>
+                  <th class="col-check"><input type="checkbox" id="check-all-videos" disabled aria-label="全选视频"></th>
                   <th class="col-index">编号</th>
                   <th class="col-date">发布时间</th>
                   <th class="col-title">视频名称</th>
@@ -100,11 +114,12 @@
               </thead>
               <tbody id="video-table-body"></tbody>
             </table>
-            <div class="empty-state">
+            <div class="empty-state" id="video-empty-state">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
               <p>暂无视频数据，请先选择UP主</p>
             </div>
           </div>
+          <div id="video-status" class="video-status" aria-live="polite"></div>
         </section>
 
         <section class="tab-panel other-features-panel" data-panel="other" hidden>
@@ -135,6 +150,33 @@
     </main>
   </div>
 
+  <dialog id="add-dialog" class="up-dialog" aria-labelledby="add-dialog-title">
+    <div class="dialog-header">
+      <h2 id="add-dialog-title">添加 UP 主</h2>
+      <button class="dialog-close" id="dialog-close" type="button" aria-label="关闭">×</button>
+    </div>
+    <form id="up-search-form">
+      <label for="up-name-input">UP 主昵称</label>
+      <div class="search-form-row">
+        <input id="up-name-input" type="text" maxlength="100" autocomplete="off" placeholder="请输入 UP 主昵称">
+        <button class="btn btn-primary" id="up-search-button" type="submit">搜索</button>
+      </div>
+    </form>
+    <div id="runtime-message" class="dialog-message" aria-live="polite"></div>
+    <div id="search-loading" class="search-loading" hidden>搜索中…</div>
+    <div id="search-results" class="search-results" aria-live="polite">
+      <p class="search-placeholder">请输入昵称后点击“搜索”</p>
+    </div>
+    <div id="add-message" class="dialog-message" aria-live="polite"></div>
+    <div class="dialog-footer">
+      <button class="btn btn-primary" id="dialog-confirm" type="button" disabled>确认写入</button>
+    </div>
+  </dialog>
+
+  <script src="/static/js/up_management.js"></script>
+  <script src="/static/js/up_search.js"></script>
+  <script src="/static/js/download_progress.js"></script>
+  <script src="/static/js/video_download.js"></script>
   <script>
     const setup = document.querySelector('#setup');
     const dashboard = document.querySelector('#dashboard');
@@ -162,7 +204,7 @@
       try {
         const response = await fetch('/api/setup-status');
         const status = await responseData(response);
-        if (status.configured) { showDashboard(); return; }
+        if (status.configured) { showDashboard(); window.upManagement.load(); return; }
         showSetup(status.message);
         selectLibrary.disabled = false;
       } catch (error) { showSetup(error.message, 'error'); }
@@ -177,6 +219,7 @@
         if (!response.ok) throw new Error(data.detail || '设置失败');
         if (data.cancelled) { showSetup(data.message); return; }
         showDashboard();
+        window.upManagement.load();
       } catch (error) { showSetup(error.message, 'error'); }
       finally {
         if (!setup.hidden) {

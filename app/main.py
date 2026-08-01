@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.routes.setup import router as setup_router
 from app.routes.up import router
+from app.routes.videos import router as videos_router
 from core.utils.system.browser import open_browser_after_start
 from core.utils.system.network import available_local_port
 from core.utils.system.resources import resource_path
@@ -17,6 +18,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="BiliUp")
     app.include_router(router)
     app.include_router(setup_router)
+    app.include_router(videos_router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)

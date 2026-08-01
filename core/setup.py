@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from core.configuration import KnowledgeBaseConfigurationError, configure_knowledge_base, knowledge_base_root
+from core.configuration import (
+    KnowledgeBaseConfigurationError,
+    batch_track_since_date,
+    configure_knowledge_base,
+    knowledge_base_root,
+    set_batch_track_since_date,
+)
 from core.utils.system.directories import DirectoryPickerError, choose_directory
 
 
@@ -20,3 +26,11 @@ def choose_and_configure_library() -> Path | None:
     if selected is None:
         return None
     return configure_knowledge_base(selected)
+
+
+def batch_track_settings() -> dict[str, str]:
+    return {"since_date": batch_track_since_date()}
+
+
+def save_batch_track_settings(since_date: str) -> dict[str, str]:
+    return {"since_date": set_batch_track_since_date(since_date)}

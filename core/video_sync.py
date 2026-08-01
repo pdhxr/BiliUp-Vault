@@ -1,0 +1,144 @@
+from datetime import datetime
+from pathlib import Path
+
+from core.configuration import knowledge_base_root
+from core.opencli_videos import fetch_user_videos
+from core.repositories.followings import find, update_video_stats
+from core.repositories.videos import downloaded_count, list_videos, merge_videos
+from core.video_errors import FollowingNotFoundError
+from core.video_reconcile import reconcile_up_videos
+
+
+def _date_key(value: object) -> str:
+    return "".join(character for character in str(value or "") if character.isdigit())[:8]
+
+
+def _following(uid: str, root: Path) -> dict:
+    row = find(uid, root / "UpList")
+    if row is None:
+        raise FollowingNotFoundError(f"未找到 UP {uid}")
+    return row
+
+
+def list_up_videos(uid: str) -> list[dict]:
+    root = knowledge_base_root()
+    following = _following(uid, root)
+    return reconcile_up_videos(uid, root=root)
+
+
+def _refresh_up_videos(
+    uid: str,
+    *,
+    page: int = 1,
+    limit: int = 50,
+    max_pages: int = 5,
+    max_new_videos: int = 20,
+    since_date: str = "",
+) -> tuple[list[dict], int, int, list[dict]]:
+    root = knowledge_base_root()
+    following = _following(uid, root)
+    nickname = str(following.get("nickname", uid))
+    existing_rows = list_videos(root / "UpList", nickname)
+    existing_bvids = {
+        str(row.get("bvid", "")).strip().upper()
+        for row in existing_rows
+        if str(row.get("bvid", "")).strip()
+    }
+    incoming: list[dict] = []
+    pages_fetched = 0
+    consecutive_empty_pages = 0
+    cutoff = _date_key(since_date)
+    for current_page in range(page, page + max_pages):
+        fresh = fetch_user_videos(uid, page=current_page, limit=limit)
+        pages_fetched += 1
+        if not fresh:
+            break
+
+        page_added = 0
+        for video in fresh:
+            video_date = _date_key(video.get("date") or video.get("pub_time"))
+            if cutoff and video_date and video_date < cutoff:
+                continue
+            bvid = str(video.get("bvid", "")).strip().upper()
+            if not bvid or bvid in existing_bvids:
+                continue
+            incoming.append(video)
+            existing_bvids.add(bvid)
+            page_added += 1
+            if len(incoming) >= max_new_videos:
+                break
+
+        if len(incoming) >= max_new_videos:
+            break
+        if page_added == 0:
+            consecutive_empty_pages += 1
+            if consecutive_empty_pages >= 2:
+                break
+        else:
+            consecutive_empty_pages = 0
+        oldest_on_page = _date_key(fresh[-1].get("date") or fresh[-1].get("pub_time"))
+        if cutoff and oldest_on_page and oldest_on_page < cutoff:
+            break
+        if len(fresh) < limit:
+            break
+
+    rows = merge_videos(root / "UpList", nickname, incoming)
+    rows = reconcile_up_videos(uid, root=root)
+    update_video_stats(
+        uid,
+        total_count=len(rows),
+        synced_count=len(rows),
+        downloaded_count=downloaded_count(rows),
+        last_sync_at=datetime.now().astimezone().isoformat(),
+        root=root / "UpList",
+    )
+    return rows, len(incoming), pages_fetched, incoming
+
+
+def refresh_up_videos_with_stats(
+    uid: str,
+    *,
+    page: int = 1,
+    limit: int = 50,
+    max_pages: int = 5,
+    max_new_videos: int = 20,
+    since_date: str = "",
+) -> tuple[list[dict], int, int]:
+    rows, added, pages, _ = _refresh_up_videos(
+        uid,
+        page=page,
+        limit=limit,
+        max_pages=max_pages,
+        max_new_videos=max_new_videos,
+        since_date=since_date,
+    )
+    return rows, added, pages
+
+
+def refresh_up_videos_with_details(
+    uid: str,
+    *,
+    since_date: str = "",
+    max_pages: int = 60,
+    max_new_videos: int = 10000,
+    limit: int = 50,
+) -> dict[str, object]:
+    rows, added, pages, new_videos = _refresh_up_videos(
+        uid,
+        page=1,
+        limit=limit,
+        max_pages=max_pages,
+        max_new_videos=max_new_videos,
+        since_date=since_date,
+    )
+    return {
+        "rows": rows,
+        "added_count": added,
+        "pages": pages,
+        "new_videos": new_videos,
+    }
+
+
+def refresh_up_videos(uid: str, *, page: int = 1, limit: int = 50) -> list[dict]:
+    rows, _, _ = refresh_up_videos_with_stats(uid, page=page, limit=limit)
+    return rows
