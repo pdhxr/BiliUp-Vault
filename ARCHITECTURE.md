@@ -14,7 +14,8 @@
 - `app/static/`：静态网页；只调用本机 API 并展示结果。
 - `app/routes/`：FastAPI 路由；只负责 HTTP 输入/输出与调用 `core`。
 - `core/`：搜索、UP 主登记、OpenCLI 适配和 UpList 数据读写；不得依赖 FastAPI 或前端。
-- `core/utils/system/`：唯一的 macOS/Windows 平台适配边界，提供统一的浏览器、子进程和退出清理接口。
+- `core/utils/system/`：唯一的 macOS/Windows 平台适配边界，提供统一的浏览器、子进程、退出清理和 PyInstaller 资源路径接口。
+- `scripts/build.py`：构建工具；在对应原生系统调用 PyInstaller，macOS 额外生成 DMG。
 
 ## 数据流
 
@@ -25,3 +26,5 @@ WebUI → FastAPI route → core → OpenCLI / UpList repository。
 ## 跨平台原则
 
 核心业务模块由 macOS 和 Windows 共用。平台差异仅限 `core/utils/system/`；两端运行同一套测试，并分别原生打包验证。
+
+应用启动时自动选择可用的本地端口并打开 WebUI，避免占用或终止其他程序的端口。打包后的应用不创建虚拟环境；虚拟环境只用于源码开发和构建。

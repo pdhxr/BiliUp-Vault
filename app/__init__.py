@@ -1,0 +1,1 @@
+"""BiliUp Web application."""

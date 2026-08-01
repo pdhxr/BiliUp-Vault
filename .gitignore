@@ -3,3 +3,9 @@
 /logs/*
 !/logs/.gitkeep
 /.venv/
+/build/
+/dist/
+/UpList/
+/*.spec
+.DS_Store
+**/__pycache__/
