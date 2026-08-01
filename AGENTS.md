@@ -6,7 +6,7 @@
 
 - MVP 只实现：OpenCLI 搜索 B 站 UP 主 → 展示昵称、UP ID、简介 → 用户单选确认 → 写入本地 UpList。
 - 采用三层单向架构：静态网页层 → FastAPI 路由层 → `core` 业务内核层。禁止反向导入或跨层耦合。
-- 所有文件路径使用 `pathlib` 和项目根目录下的相对路径；禁止硬编码、保存或传递绝对路径。仅 `core/utils/system/` 可从运行时派生 PyInstaller 资源根目录或发现系统可执行文件。
+- 所有文件路径使用 `pathlib`。项目内部路径使用项目根目录下的相对路径；禁止硬编码路径。用户首次选择的 `knowledge_base_root` 是配置中唯一允许保存的绝对路径，由 `core/utils/system/` 发现应用配置目录后统一读取。
 - Windows/macOS 差异代码只能放在 `core/utils/system/`，以统一函数接口屏蔽平台差异。其他模块不得判断系统类型、调用 shell 或使用系统专有 API。
 - OpenCLI 仅能由 `core` 内的适配模块调用；路由、网页与数据写入器不得执行 CLI 命令。
 - 不添加视频下载、字幕、调度、登录、迁移、云同步等非 MVP 功能。
@@ -27,10 +27,11 @@ app/
   static/                  # 静态网页：只调用本机 API、展示与交互
 core/
   up_search.py             # 搜索用例与 OpenCLI 结果标准化
+  configuration.py         # 用户知识库根目录配置
+  setup.py                 # 首次目录选择与配置保存
   followings.py            # UP 主登记/更新用例
   repositories/            # UpList JSON 与 Markdown 读写
-  utils/system/            # 唯一的平台适配边界
-config.json                # 本机配置预留，当前为 {}
+  utils/system/            # 唯一的平台适配边界（含目录选择与配置目录）
 requirements.txt           # Python 依赖
 README.md                  # 安装、运行、测试说明
 ARCHITECTURE.md            # 当前架构说明
@@ -49,11 +50,12 @@ logs/                      # 本地诊断日志
 
 ## 数据与配置
 
-- `UpList/followings.json` 是唯一真源：按添加顺序保存 `uid`、`nickname`、`bio`、`scheduled_tracking`、`created_at`、`last_sync_at`。
+- 首次运行必须选择一个已存在、可写的视频知识库目录；取消或校验失败时不写入配置，不开放搜索和登记。
+- 配置文件固定保存到 macOS `~/Library/Application Support/BiliUp/config.json` 或 Windows `%LOCALAPPDATA%\BiliUp\config.json`；`knowledge_base_root` 保存用户选择的绝对路径，作为路径规则的唯一受控例外。
+- `<knowledge_base_root>/UpList/followings.json` 是唯一真源：按添加顺序保存 `uid`、`nickname`、`bio`、`scheduled_tracking`、`created_at`、`last_sync_at`。
 - 以 `uid` 去重；重复时更新昵称和简介，不重置 `created_at`。
-- `UpList/bilibili-up-followings.md` 仅由 JSON 生成，用固定 Markdown 表格展示；它不是写入源。
+- `<knowledge_base_root>/UpList/bilibili-up-followings.md` 仅由 JSON 生成，用固定 Markdown 表格展示；它不是写入源。
 - 不创建或修改 `<nickname>.jsonl`，它属于后续视频追踪能力。
-- `config.json` 只保存本机配置（如视频存储目录）；当前保持 `{}`。所有目录值必须是项目相对路径。
 - `tmp/` 不存正式数据；`logs/` 不记录令牌、Cookie、凭据或完整 OpenCLI 原始输出。
 
 ## 跨平台与验证
@@ -69,7 +71,7 @@ logs/                      # 本地诊断日志
 - 新增或移除依赖时，同步更新 `requirements.txt` 与 README。
 - 改动模块、接口、数据格式或平台适配时，同步更新 `ARCHITECTURE.md`。
 - 文档只描述已实现的功能；未实现内容必须明确标记为规划。
-- 修复 Bug 或开发功能后只运行源码测试，交由用户手动验收，不立即打包。用户确认并将改动作为版本提交后，才进行 macOS/Windows 对应安装包的构建与冒烟测试。
+- 修复 Bug 或开发功能后只运行源码测试，交由用户手动验收，不立即打包。若用户要求先验证安装包，可构建未提交候选包供其测试；通过后更新文档并提交。其他版本按用户确认的发布流程执行对应平台的构建与冒烟测试。
 
 ## Git 与多人协作
 

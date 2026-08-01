@@ -19,42 +19,49 @@
   <main>
     <h1>BiliUp</h1>
     <p>搜索并登记 B 站 UP 主</p>
-    <div id="runtime" class="runtime">正在检查 OpenCLI…</div>
-    <div class="search"><input id="query" placeholder="输入 UP 主昵称" autocomplete="off" disabled><button id="search" disabled>搜索</button></div>
-    <div class="actions"><button id="save" disabled>确认写入</button></div>
-    <section id="results" aria-live="polite"></section>
-    <div id="message" aria-live="polite"></div>
+    <section id="setup" class="runtime" aria-live="polite">
+      <strong>设置视频知识库</strong>
+      <p>首次使用请选择一个用于保存视频与 UP 登记信息的目录。</p>
+      <button id="select-library" disabled>选择视频知识库目录</button>
+      <div id="setup-message"></div>
+    </section>
+    <section id="dashboard" hidden>
+      <div id="runtime" class="runtime">正在检查 OpenCLI…</div>
+      <div class="search"><input id="query" placeholder="输入 UP 主昵称" autocomplete="off" disabled><button id="search" disabled>搜索</button></div>
+      <div class="actions"><button id="save" disabled>确认写入</button></div>
+      <section id="results" aria-live="polite"></section>
+      <div id="message" aria-live="polite"></div>
+    </section>
   </main>
   <script>
-    const query = document.querySelector('#query'), search = document.querySelector('#search'), results = document.querySelector('#results'), save = document.querySelector('#save'), message = document.querySelector('#message'), runtime = document.querySelector('#runtime');
-    let selected = null, timer, latestRequestId = 0, runtimeReady = false;
+    const setup = document.querySelector('#setup'), setupMessage = document.querySelector('#setup-message'), selectLibrary = document.querySelector('#select-library'), dashboard = document.querySelector('#dashboard'), query = document.querySelector('#query'), search = document.querySelector('#search'), results = document.querySelector('#results'), save = document.querySelector('#save'), message = document.querySelector('#message'), runtime = document.querySelector('#runtime');
+    let selected = null, runtimeReady = false;
     function show(text, kind = '') { message.textContent = text; message.className = kind; }
+    function showSetup(text, kind = '') { setupMessage.textContent = text; setupMessage.className = kind; }
     function setSearching(searching) { search.disabled = searching || !runtimeReady; search.textContent = searching ? '搜索中…' : '搜索'; }
-    async function runSearch(requestId) {
+    async function responseData(response) { const text = await response.text(); try { return JSON.parse(text); } catch (_) { throw new Error(response.ok ? '服务返回的数据格式不正确' : '服务请求失败，请重试'); } }
+    function showDashboard() { setup.hidden = true; dashboard.hidden = false; checkRuntime(); }
+    async function runSearch() {
       const nickname = query.value.trim(); selected = null; save.disabled = true; results.innerHTML = '';
       if (!nickname) { setSearching(false); return; }
       setSearching(true);
       show('搜索中…');
       try {
         const response = await fetch('/api/up-search', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nickname}) });
-        const data = await response.json(); if (!response.ok) throw new Error(data.detail || '搜索失败');
-        if (requestId !== latestRequestId) return;
+        const data = await responseData(response); if (!response.ok) throw new Error(data.detail || '搜索失败');
         if (!data.length) { show('未找到匹配的 UP 主'); return; }
         show(''); data.forEach(item => { const button = document.createElement('button'); button.className = 'result'; button.innerHTML = `<strong>${escapeHtml(item.nickname)}</strong><span class="meta">UP ID：${escapeHtml(item.uid)} · ${escapeHtml(item.bio || '-')}</span>`; button.onclick = () => { document.querySelectorAll('.result').forEach(node => node.classList.remove('selected')); button.classList.add('selected'); selected = item; save.disabled = false; show(''); }; results.append(button); });
-      } catch (error) { if (requestId === latestRequestId) show(error.message, 'error'); }
-      finally { if (requestId === latestRequestId) setSearching(false); }
+      } catch (error) { show(error.message, 'error'); }
+      finally { setSearching(false); }
     }
     function escapeHtml(value) { const node = document.createElement('span'); node.textContent = value; return node.innerHTML; }
-    async function checkRuntime() { try { const response = await fetch('/api/runtime-status'); const status = await response.json(); runtimeReady = Boolean(status.ready); setSearching(false); query.disabled = !runtimeReady; runtime.textContent = status.message; if (!status.ready) { runtime.classList.add('error'); if (!status.installed) { const command = document.createElement('code'); command.textContent = 'npm install -g @jackwener/opencli'; runtime.append(command); const link = document.createElement('a'); link.href = 'https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk'; link.target = '_blank'; link.rel = 'noreferrer'; link.textContent = '安装 OpenCLI Chrome 扩展'; runtime.append(link); } } } catch (_) { runtimeReady = false; setSearching(false); query.disabled = true; runtime.textContent = '无法检查 OpenCLI 运行环境'; runtime.classList.add('error'); } }
-    search.onclick = () => { clearTimeout(timer); runSearch(++latestRequestId); };
-    query.addEventListener('input', () => {
-      clearTimeout(timer);
-      const requestId = ++latestRequestId;
-      if (!query.value.trim()) { selected = null; save.disabled = true; results.innerHTML = ''; show(''); setSearching(false); return; }
-      timer = setTimeout(() => runSearch(requestId), 500);
-    });
-    save.onclick = async () => { if (!selected) return; save.disabled = true; try { const response = await fetch('/api/followings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(selected) }); const data = await response.json(); if (!response.ok) throw new Error(data.detail || '写入失败'); show(data.action === 'created' ? '已新增' : '已更新', 'success'); } catch (error) { show(error.message, 'error'); } finally { save.disabled = !selected; } };
-    checkRuntime();
+    async function checkRuntime() { try { const response = await fetch('/api/runtime-status'); const status = await responseData(response); runtimeReady = Boolean(status.ready); setSearching(false); query.disabled = !runtimeReady; runtime.textContent = status.message; if (!status.ready) { runtime.classList.add('error'); if (!status.installed) { const command = document.createElement('code'); command.textContent = 'npm install -g @jackwener/opencli'; runtime.append(command); const link = document.createElement('a'); link.href = 'https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk'; link.target = '_blank'; link.rel = 'noreferrer'; link.textContent = '安装 OpenCLI Chrome 扩展'; runtime.append(link); } } } catch (_) { runtimeReady = false; setSearching(false); query.disabled = true; runtime.textContent = '无法检查 OpenCLI 运行环境'; runtime.classList.add('error'); } }
+    async function checkSetup() { try { const response = await fetch('/api/setup-status'); const status = await responseData(response); if (status.configured) { showDashboard(); return; } showSetup(status.message); selectLibrary.disabled = false; } catch (error) { showSetup(error.message, 'error'); } }
+    async function selectKnowledgeBase() { selectLibrary.disabled = true; selectLibrary.textContent = '正在打开目录选择器…'; showSetup(''); try { const response = await fetch('/api/setup/select-library', { method: 'POST' }); const data = await responseData(response); if (!response.ok) throw new Error(data.detail || '设置失败'); if (data.cancelled) { showSetup(data.message); return; } showDashboard(); } catch (error) { showSetup(error.message, 'error'); } finally { if (!setup.hidden) { selectLibrary.disabled = false; selectLibrary.textContent = '选择视频知识库目录'; } } }
+    search.onclick = runSearch;
+    save.onclick = async () => { if (!selected) return; save.disabled = true; try { const response = await fetch('/api/followings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(selected) }); const data = await responseData(response); if (!response.ok) throw new Error(data.detail || '写入失败'); show(data.action === 'created' ? '已新增' : '已更新', 'success'); } catch (error) { show(error.message, 'error'); } finally { save.disabled = !selected; } };
+    selectLibrary.onclick = selectKnowledgeBase;
+    checkSetup();
   </script>
 </body>
 </html>

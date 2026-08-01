@@ -6,6 +6,7 @@
 /UpList/
 
 # Local configuration
+/config.json
 /config.local.json
 
 # Python environments and test artifacts

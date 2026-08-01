@@ -1,11 +1,15 @@
 import json
 import shutil
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from core.configuration import configure_knowledge_base, knowledge_base_root
+from core.followings import save_following
 from core.repositories.followings import save
 from core.up_search import _parse_items
+from core.utils.system.directories import choose_directory
 from core.utils.system.resources import resource_path
 from core.utils.system.process import find_opencli, run_opencli
 from core.utils.system.network import available_local_port
@@ -63,6 +67,27 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(updated["created_at"], first["created_at"])
         self.assertIn("| 1 | 新昵称 | 123 | 新简介 |", markdown)
+
+    def test_configured_knowledge_base_is_written_outside_project(self) -> None:
+        library_root = self.root / "knowledge-base"
+        configuration = self.root / "app-data/config.json"
+        library_root.mkdir(parents=True)
+        configured = configure_knowledge_base(library_root, configuration)
+        self.assertEqual(configured, library_root.resolve())
+        self.assertEqual(knowledge_base_root(configuration), library_root.resolve())
+        self.assertEqual(json.loads(configuration.read_text(encoding="utf-8"))["knowledge_base_root"], str(library_root.resolve()))
+
+    @patch("core.followings.knowledge_base_root")
+    def test_save_following_uses_configured_knowledge_base(self, configured_root) -> None:
+        configured_root.return_value = self.root / "knowledge-base"
+        save_following("456", "测试 UP", "测试简介")
+        self.assertTrue((self.root / "knowledge-base/UpList/followings.json").is_file())
+
+    @patch("core.utils.system.directories.subprocess.run")
+    @patch("core.utils.system.directories.platform.system", return_value="Darwin")
+    def test_macos_directory_picker_returns_selected_directory(self, _system, run) -> None:
+        run.return_value = subprocess.CompletedProcess([], 0, stdout="/tmp/knowledge-base/\n", stderr="")
+        self.assertEqual(choose_directory(), Path("/tmp/knowledge-base"))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from core.configuration import KnowledgeBaseConfigurationError
 from core.followings import save_following
 from core.runtime import opencli_status
 from core.up_search import OpenCliSearchError, search_up
@@ -41,5 +42,10 @@ def add_following(request: FollowingRequest) -> dict[str, object]:
     uid = request.uid.strip()
     if not uid or not nickname:
         raise HTTPException(status_code=422, detail="UP ID 和昵称不能为空")
-    record, action = save_following(uid, nickname, request.bio)
+    try:
+        record, action = save_following(uid, nickname, request.bio)
+    except KnowledgeBaseConfigurationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail="无法写入视频知识库，请重新选择目录") from exc
     return {"action": action, "record": record}
