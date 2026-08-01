@@ -1,11 +1,28 @@
+# Runtime data
 /tmp/*
 !/tmp/.gitkeep
 /logs/*
 !/logs/.gitkeep
+/UpList/
+
+# Local configuration
+/config.local.json
+
+# Python environments and test artifacts
 /.venv/
+/.pytest_cache/
+/.coverage
+/htmlcov/
+**/__pycache__/
+*.py[cod]
+
+# PyInstaller artifacts
 /build/
 /dist/
-/UpList/
 /*.spec
+
+# Local editor and operating-system files
 .DS_Store
-**/__pycache__/
+Thumbs.db
+.idea/
+.vscode/

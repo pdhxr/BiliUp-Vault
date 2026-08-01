@@ -2,7 +2,7 @@
 
 BiliUp 是跨 macOS 和 Windows 的本地 B 站 UP 主搜索与登记工具。
 
-当前 MVP：通过 OpenCLI 搜索 UP 主，展示昵称、UP ID 和简介，用户确认后写入本地 UpList。
+当前 MVP：通过 OpenCLI 搜索 UP 主，展示昵称、UP ID 和简介，用户确认后写入本地 UpList。搜索期间按钮置灰并显示“搜索中…”；搜索结果区默认显示约 3–5 项，其余结果可在列表内滚动查看；“确认写入”按钮位于结果列表上方。
 
 - 产品需求：[PRD.md](PRD.md)
 - 架构说明：[ARCHITECTURE.md](ARCHITECTURE.md)
@@ -122,6 +122,10 @@ Windows PowerShell：
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
+
+## 开发与打包流程
+
+修复 Bug 或开发功能后，先运行源码自动化测试，再由用户以源码模式手动验收；该阶段不生成安装包。用户确认并将改动作为一个版本提交后，才执行对应平台的打包和安装包冒烟测试。
 
 ## 构建安装包
 
