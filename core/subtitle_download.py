@@ -1,4 +1,7 @@
-"""字幕脚本下载、存在性判断和索引状态协调。"""
+"""字幕脚本下载、存在性判断和索引状态协调。
+
+字幕接口属于可选附加能力；外部服务失败时不影响视频下载主流程。
+"""
 
 from pathlib import Path
 from threading import Lock, Thread

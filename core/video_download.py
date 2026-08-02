@@ -14,7 +14,7 @@ from core.download_files import (
 from core.download_progress import get_progress, now_iso, set_progress, watch_download_size
 from core.opencli_videos import OpenCliVideoError, download_video
 from core.repositories.followings import find, update_video_stats
-from core.repositories.library import find_local_video, record_download
+from core.repositories.library import find_local_video, record_download, set_transcript
 from core.repositories.videos import downloaded_count, list_videos, mark_downloaded, safe_video_directory_name
 from core.subtitle_download import download_subtitle
 from core.video_errors import FollowingNotFoundError
@@ -26,7 +26,7 @@ _DOWNLOAD_QUALITIES = ("best", "720p", "480p")
 
 
 def _ensure_subtitle(bvid: str, video_path: Path) -> bool:
-    """下载后补拉官方字幕；字幕不可用时不影响视频下载成功。"""
+    """下载后尝试补拉官方字幕；字幕服务失败不影响视频下载。"""
     return download_subtitle(bvid, video_path)
 
 
@@ -55,6 +55,15 @@ def _download_one(uid: str, bvid: str) -> None:
     if indexed:
         local_path = root / str(indexed["relative_path"])
         transcript = _ensure_subtitle(bvid, local_path)
+        set_transcript(
+            root,
+            nickname,
+            bvid=bvid,
+            title=title,
+            date=date,
+            transcript=transcript,
+            uid=uid,
+        )
         rows = mark_downloaded(
             root / "UpList",
             nickname,

@@ -76,8 +76,8 @@
         <td class="col-index">${index + 1}</td>
         <td class="col-date">${escapeHtml(formatDate(video.pub_time))}</td>
         <td class="col-title" title="${escapeHtml(video.title)}">${escapeHtml(video.title)}</td>
-        <td class="col-download video-download-state">${video.downloaded ? '是' : '否'}</td>
-        <td class="col-script">${video.transcript ? '是' : '否'}</td>`;
+        <td class="col-download video-download-state"><input class="status-checkbox" type="checkbox" disabled ${video.downloaded ? 'checked' : ''} aria-label="${video.downloaded ? '已下载' : '未下载'}"></td>
+        <td class="col-script"><input class="status-checkbox" type="checkbox" disabled ${video.transcript ? 'checked' : ''} aria-label="${video.transcript ? '已有字幕脚本' : '没有字幕脚本'}"></td>`;
       row.querySelector('.video-checkbox').addEventListener('change', updateButtons);
       tableBody.appendChild(row);
     });

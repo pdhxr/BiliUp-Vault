@@ -33,7 +33,7 @@
 1. 用户打开本地 WebUI。若尚未配置知识库，网页只显示目录选择页。
 2. 用户点击“选择视频知识库目录”，在系统原生目录选择器中选择一个已存在、可写的目录。
 3. 系统保存配置后显示搜索看板。
-4. 系统打开“UP 主管理”页签，读取已登记的 UP 主并按序号、昵称、UP 简介、最后同步时间、视频总数、已下载/已同步和操作列展示；没有记录时显示空状态。
+4. 系统打开“UP 主管理”页签，读取已登记的 UP 主并按序号、昵称、UP 简介、最后同步时间、已下载/已同步和操作列展示；没有记录时显示空状态。
 5. 用户在搜索框输入昵称并点击“搜索”；输入过程不自动调用接口。
 6. 系统显示匹配项的昵称、UP ID 与简介；没有结果时显示“未找到匹配的 UP 主”。
 7. 用户单选一项并点击确认写入。
@@ -67,8 +67,8 @@
 
 - `GET /api/followings` 读取当前配置的 `<knowledge_base_root>/UpList/followings.json`，返回按登记顺序排列的列表。
 - `POST /api/followings/tracking` 接收 `up_id` 和 `scheduled_tracking`，立即更新对应的 `followings.json` 记录。
-- 每行返回 `up_id`、`nickname`、`bio`、`scheduled_tracking`、`last_sync_time`、`total_count`、`synced_count` 和 `downloaded_count`；表格展示昵称、简介、自动追踪下载、时间和统计列，`up_id` 用于后续视频接口。
-- 页面列顺序为：选择框、序号、UP 名称、UP 简介、自动追踪下载、最后同步时间、视频总数、已下载/已同步、操作。
+- 每行返回 `up_id`、`nickname`、`bio`、`scheduled_tracking`、`last_sync_time`、`total_count`、`synced_count` 和 `downloaded_count`；表格展示昵称、简介、自动追踪下载、时间和已下载/已同步列，`up_id` 用于后续视频接口。
+- 页面列顺序为：选择框、序号、UP 名称、UP 简介、自动追踪下载、最后同步时间、已下载/已同步、操作。
 - 表头总复选框与每行选择框双向联动；部分行选中时显示半选状态。批量同步只处理当前勾选的 UP。
 - `followings.json` 中没有视频统计字段时，统计列显示为 `0 / 0`，最后同步时间显示为 `-`。
 - 自动追踪下载开关变更后立即保存到当前知识库的 `UpList/followings.json`；批量追踪并下载只处理管理列表中 `scheduled_tracking=true`（即“自动追踪下载”列已勾选）的全部 UP，不要求左侧主复选框。
@@ -98,8 +98,7 @@
 - 批量任务分为 `tracking` 和 `downloading` 两阶段，状态接口返回 `current_up`、`done/total`、`added_total`、`download_done/download_total`、`download_failed` 与错误计数；进入下载阶段后界面显示“下载中 已完成数/需要下载总数”，其中 `download_done` 只统计成功完成的视频；批量追踪按钮始终可用，缺少必要条件时点击后显示提示。
 - 下载进度记录在后台保留最多 30 分钟，前端允许隐藏进度面板；隐藏不会停止后台下载。
 - 同一 UP 的下载文件按 `<UP名称>_<日期>_<标题>.<扩展名>` 保存；文件名中的跨平台非法字符统一替换。
-- 视频下载成功后，调用 `opencli bilibili subtitle <bvid> -f json --window background` 获取字幕脚本；有内容时在视频旁写入 `<视频文件名>__transcript.md`，并把远端追踪清单和本地 `videos.jsonl` 的 `transcript` 更新为 `true`。字幕获取失败不影响视频下载成功状态。
-- 刷新视频列表时重新检查本地视频旁的字幕脚本 sidecar，并同步校准两套索引中的 `transcript` 布尔值；批量追踪时也会为已下载但缺少脚本的视频排队重试。
+- 视频下载后保留字幕查询和 sidecar 写入接口；当前接口可能因 B 站/OpenCLI 服务变化返回失败，失败不影响视频下载主流程。
 - 下载失败不修改已下载标记；不实现语音转录或重新编码。
 
 ### 4.6 UP 删除
@@ -156,8 +155,8 @@
 13. `followings.json` 或视频索引写入失败时，原文件仍可读取且内容未损坏。
 14. macOS 与 Windows 均通过相同自动化测试；涉及启动或打包的改动在两个系统分别验证。
 15. 未安装 OpenCLI 时首页显示安装、Chrome 扩展和 B 站登录指引；安装完成后无需修改业务代码即可被识别。
-16. 视频下载成功后，若 OpenCLI 返回字幕内容，则生成相邻的 `__transcript.md` 文件，远端和本地索引的 `transcript` 均为 `true`；刷新已有视频时能根据 sidecar 重新计算该字段，字幕失败不影响视频下载。
+16. 字幕接口返回有效内容时生成相邻的 `__transcript.md` 并更新索引；接口失败不得影响视频下载，已有 sidecar 可继续被本地索引识别。
 
 ## 7. 参考边界
 
-参考工作流说明了 UP 主视频列表、删除登记、下载和字幕脚本 sidecar 的行为边界。本 PRD 采用其 OpenCLI 用户视频查询、下载和字幕命令，不采用转录、调度、迁移和旧版 Markdown 视频记录流程。
+参考工作流说明了 UP 主视频列表、删除登记、下载和字幕 sidecar 的行为边界。本 PRD 保留字幕查询/写入接口，不采用语音转录、调度、迁移和旧版 Markdown 视频记录流程。

@@ -102,7 +102,6 @@
         <td class="col-bio" title="${escapeHtml(row.bio)}">${escapeHtml(row.bio)}</td>
         <td class="col-tracking"><input class="tracking-checkbox" type="checkbox" data-up-id="${escapeHtml(row.up_id)}" ${row.scheduled_tracking ? 'checked' : ''} aria-label="${escapeHtml(row.nickname)}自动追踪下载"></td>
         <td class="col-time">${escapeHtml(formatDate(row.last_sync_time))}</td>
-        <td class="col-total">${count(row.total_count)}</td>
         <td class="col-synced">
           <div class="sync-bar-bg"><div class="sync-bar-fill" style="width:${percent}%"></div></div>
           <span class="sync-pct">${downloaded} / ${synced}</span>
