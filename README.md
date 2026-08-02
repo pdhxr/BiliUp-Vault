@@ -60,7 +60,7 @@ OpenCLI 的 Daemon、Extension 和 Connectivity 检查正常后，BiliUp 才能�
 2. 双击 `BiliUp.exe`；如遇 SmartScreen 提示，确认来源后选择继续运行。
 3. 首次进入 WebUI 时，选择一个已存在且可写的视频知识库目录。
 
-Windows 安装包必须在 Windows 原生环境构建；当前项目已提供构建脚本，但尚未完成 Windows 原生安装包验证。
+Windows 安装包必须在 Windows 原生环境构建；构建脚本已在 Windows 11 / Python 3.13 上验证通过，PyInstaller 产物 `dist/BiliUp/BiliUp.exe` 可正常启动 WebUI、读写本地知识库。`--windowed` 模式下 uvicorn 的 stdout 崩溃已通过 `scripts/pyi_rth_stdout.py` runtime hook 修复。
 
 ## 数据和配置
 
@@ -136,5 +136,5 @@ Windows 生成 EXE 目录（必须在 Windows 原生环境执行）：
 ## 当前限制
 
 - OpenCLI、Node.js、Chrome 扩展、yt-dlp 和 B 站浏览器登录尚未由安装包自动处理。
-- macOS 包尚未签名、公证；Windows EXE 尚未完成原生构建、签名和验证。
+- macOS 包尚未签名、公证。Windows EXE 已在 Windows 11 原生环境完成 PyInstaller 构建与启动冒烟验证；代码签名与 SmartScreen 白名单仍待处理。
 - 当前版本尚未提供在 WebUI 中更换已选知识库目录的设置页。

@@ -13,6 +13,7 @@ def build_package(target: str) -> None:
     separator = ";" if target == "windows" else ":"
     command = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
+        "--runtime-hook", "scripts/pyi_rth_stdout.py",
         "--name", "BiliUp", "--add-data", f"app/static{separator}app/static", "app/main.py",
     ]
     subprocess.run(command, check=True)

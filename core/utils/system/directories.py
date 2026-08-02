@@ -47,6 +47,7 @@ def choose_directory() -> Path | None:
             capture_output=True,
             text=True,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         if result.returncode != 0:
             raise DirectoryPickerError("无法打开目录选择器")
