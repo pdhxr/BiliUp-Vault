@@ -65,4 +65,5 @@ def run_opencli(arguments: list[str], timeout: int) -> subprocess.CompletedProce
         timeout=timeout,
         check=False,
         env=_process_environment(executable),
+        **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
     )
