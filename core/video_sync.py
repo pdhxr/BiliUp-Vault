@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Callable
 
 from core.configuration import knowledge_base_root
 from core.opencli_videos import fetch_user_videos
@@ -34,6 +35,8 @@ def _refresh_up_videos(
     max_pages: int = 5,
     max_new_videos: int = 20,
     since_date: str = "",
+    on_page: Callable[[int], None] | None = None,
+    on_page_result: Callable[[int, int], None] | None = None,
 ) -> tuple[list[dict], int, int, list[dict]]:
     root = knowledge_base_root()
     following = _following(uid, root)
@@ -46,15 +49,17 @@ def _refresh_up_videos(
     }
     incoming: list[dict] = []
     pages_fetched = 0
-    consecutive_empty_pages = 0
     cutoff = _date_key(since_date)
     for current_page in range(page, page + max_pages):
+        if on_page:
+            on_page(current_page)
         fresh = fetch_user_videos(uid, page=current_page, limit=limit)
         pages_fetched += 1
+        if on_page_result:
+            on_page_result(current_page, len(fresh))
         if not fresh:
             break
 
-        page_added = 0
         for video in fresh:
             video_date = _date_key(video.get("date") or video.get("pub_time"))
             if cutoff and video_date and video_date < cutoff:
@@ -64,18 +69,11 @@ def _refresh_up_videos(
                 continue
             incoming.append(video)
             existing_bvids.add(bvid)
-            page_added += 1
             if len(incoming) >= max_new_videos:
                 break
 
         if len(incoming) >= max_new_videos:
             break
-        if page_added == 0:
-            consecutive_empty_pages += 1
-            if consecutive_empty_pages >= 2:
-                break
-        else:
-            consecutive_empty_pages = 0
         oldest_on_page = _date_key(fresh[-1].get("date") or fresh[-1].get("pub_time"))
         if cutoff and oldest_on_page and oldest_on_page < cutoff:
             break
@@ -103,6 +101,8 @@ def refresh_up_videos_with_stats(
     max_pages: int = 5,
     max_new_videos: int = 20,
     since_date: str = "",
+    on_page: Callable[[int], None] | None = None,
+    on_page_result: Callable[[int, int], None] | None = None,
 ) -> tuple[list[dict], int, int]:
     rows, added, pages, _ = _refresh_up_videos(
         uid,
@@ -111,6 +111,8 @@ def refresh_up_videos_with_stats(
         max_pages=max_pages,
         max_new_videos=max_new_videos,
         since_date=since_date,
+        on_page=on_page,
+        on_page_result=on_page_result,
     )
     return rows, added, pages
 
@@ -118,6 +120,7 @@ def refresh_up_videos_with_stats(
 def refresh_up_videos_with_details(
     uid: str,
     *,
+    page: int = 1,
     since_date: str = "",
     max_pages: int = 60,
     max_new_videos: int = 10000,
@@ -125,7 +128,7 @@ def refresh_up_videos_with_details(
 ) -> dict[str, object]:
     rows, added, pages, new_videos = _refresh_up_videos(
         uid,
-        page=1,
+        page=page,
         limit=limit,
         max_pages=max_pages,
         max_new_videos=max_new_videos,

@@ -54,3 +54,19 @@ def choose_directory() -> Path | None:
         selected = result.stdout.strip()
         return Path(selected) if selected else None
     raise DirectoryPickerError("当前系统不受支持")
+
+
+def open_directory(directory: Path) -> None:
+    """用当前系统的文件管理器打开目录。"""
+    target = Path(directory)
+    system = platform.system()
+    if system == "Darwin":
+        command = ["open", str(target)]
+    elif system == "Windows":
+        command = ["explorer.exe", str(target)]
+    else:
+        raise DirectoryPickerError("当前系统不受支持")
+    try:
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        raise DirectoryPickerError("无法打开文件管理器") from exc

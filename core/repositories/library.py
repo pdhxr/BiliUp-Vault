@@ -88,6 +88,19 @@ def find_local_video(root: Path, nickname: str, *, bvid: str = "", title: str = 
     return None
 
 
+def find_other_video(root: Path, *, bvid: str = "", title: str = "", date: str = "") -> dict | None:
+    """查找 ``OtherVideos`` 索引中仍存在的单视频。"""
+    index_path = root / "OtherVideos" / "videos.jsonl"
+    for row in _load(index_path):
+        if not _matches(row, bvid=bvid, title=title, date=date):
+            continue
+        relative_path = str(row.get("relative_path", ""))
+        target = root / relative_path
+        if target.is_file() and target.stat().st_size > 0:
+            return dict(row)
+    return None
+
+
 def record_download(
     root: Path,
     nickname: str,
@@ -100,9 +113,50 @@ def record_download(
     uid: str = "unknown-up",
 ) -> dict:
     """登记一个已确认存在的本地视频。"""
+    return _record_download(
+        library_videos_path(root, nickname, uid),
+        root,
+        video_path,
+        bvid=bvid,
+        title=title,
+        date=date,
+        transcript=transcript,
+    )
+
+
+def record_other_download(
+    root: Path,
+    video_path: Path,
+    *,
+    bvid: str,
+    title: str,
+    date: str,
+    transcript: bool,
+) -> dict:
+    """登记保存到 ``OtherVideos`` 的单视频。"""
+    return _record_download(
+        root / "OtherVideos" / "videos.jsonl",
+        root,
+        video_path,
+        bvid=bvid,
+        title=title,
+        date=date,
+        transcript=transcript,
+    )
+
+
+def _record_download(
+    index_path: Path,
+    root: Path,
+    video_path: Path,
+    *,
+    bvid: str,
+    title: str,
+    date: str,
+    transcript: bool,
+) -> dict:
     if not video_path.is_file() or video_path.stat().st_size <= 0:
         raise FileNotFoundError(f"下载文件不存在：{video_path}")
-    index_path = library_videos_path(root, nickname, uid)
     rows = _load(index_path)
     relative_path = video_path.relative_to(root).as_posix()
     entry = {

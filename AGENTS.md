@@ -4,7 +4,7 @@
 
 ## 全局准则
 
-- MVP 实现：OpenCLI 搜索 B 站 UP 主 → 展示昵称、UP ID、简介 → 用户单选确认 → 写入本地 UpList；支持刷新已登记 UP 的视频列表、配置 UP 自动追踪下载和批量增量追踪下载。
+- MVP 实现：OpenCLI 搜索 B 站 UP 主 → 展示昵称、UP ID、简介 → 用户单选确认 → 写入本地 UpList；支持刷新已登记 UP 的视频列表、配置 UP 自动追踪下载和批量增量追踪下载；“其他功能”页签支持知识库目录操作和未纳入追踪的单视频下载。
 - 采用三层单向架构：静态网页层 → FastAPI 路由层 → `core` 业务内核层。禁止反向导入或跨层耦合。
 - 所有文件路径使用 `pathlib`。项目内部路径使用项目根目录下的相对路径；禁止硬编码路径。用户首次选择的 `knowledge_base_root` 是配置中唯一允许保存的绝对路径，由 `core/utils/system/` 发现应用配置目录后统一读取。
 - Windows/macOS 差异代码只能放在 `core/utils/system/`，以统一函数接口屏蔽平台差异。其他模块不得判断系统类型、调用 shell 或使用系统专有 API。
@@ -16,7 +16,7 @@
 - 开发具体功能时，只读参考 `/Users/juliehou/Movies/Up/tools/server.py` 的既有行为，重点核对 OpenCLI 命令、终端输出解析、超时与错误语义。
 - 参考文件不是本项目依赖：禁止从源码导入、运行时访问或复制其绝对路径；新项目必须能够独立运行。
 - 禁止照搬旧 `server.py` 的单文件聚合结构。HTTP 处理留在 `app/routes/`，搜索与写入实现放在 `core/`，系统差异放在 `core/utils/system/`。
-- 只提取当前 PRD 所需的 UP 搜索、登记、视频列表刷新、视频下载和字幕脚本获取逻辑；旧项目的转录、调度、迁移与日志功能不得带入 MVP。
+- 只提取当前 PRD 所需的 UP 搜索、登记、视频列表刷新、视频下载、单视频下载和字幕脚本获取逻辑；旧项目的转录、调度、迁移与日志功能不得带入 MVP。
 
 ## 项目结构
 
@@ -35,6 +35,7 @@ core/
   video_batch_sync.py      # 选中 UP 的后台批量增量同步
   video_batch_track_download.py # 按配置日期追踪并下载“自动追踪下载”列已勾选的 UP
   video_download.py        # 视频下载队列与状态用例
+  single_video_download.py # 未纳入 UP 追踪的单视频下载用例
   subtitle_download.py     # 字幕脚本获取、sidecar 写入和 transcript 状态同步
   download_files.py        # 下载文件发现、临时文件清理和安全命名
   download_progress.py     # 下载状态存储、大小监测和过期清理
@@ -61,11 +62,12 @@ logs/                      # 本地诊断日志
 
 - 首次运行必须选择一个已存在、可写的视频知识库目录；取消或校验失败时不写入配置，不开放搜索和登记。
 - 配置文件固定保存到 macOS `~/Library/Application Support/BiliUp/config.json` 或 Windows `%LOCALAPPDATA%\BiliUp\config.json`；`knowledge_base_root` 保存用户选择的绝对路径，`batch_track_since_date` 保存批量追踪起始日期，前者是路径规则的唯一受控例外。
-- `<knowledge_base_root>/UpList/followings.json` 是 UP 登记与统计真源：按添加顺序保存 `uid`、`nickname`、`bio`、`scheduled_tracking`、`created_at`、`last_sync_at`、`total_count`、`synced_count`、`downloaded_count`。
+- `<knowledge_base_root>/UpList/followings.json` 是 UP 登记与统计真源：按添加顺序保存 `uid`、`nickname`、`bio`、`scheduled_tracking`、`created_at`、`last_sync_at`、`total_count`、`synced_count`、`downloaded_count`；`next_sync_page` 是不在 UI 展示的单 UP 手动同步游标。
 - 以 `uid` 去重；重复时更新昵称和简介，不重置 `created_at`。
 - `<knowledge_base_root>/UpList/bilibili-up-followings.md` 仅由 JSON 生成，用固定 Markdown 表格展示；它不是写入源。
 - 远端追踪清单保存为 `<knowledge_base_root>/UpList/<UP名称>.jsonl`（例如 `UpList/火星船长1989.jsonl`），保存网站元数据和下载状态；本地视频库索引独立保存为 `<knowledge_base_root>/SortedMp4/<UP名称>/videos.jsonl`，只记录真实存在的视频，并使用 `bvid`、`date`、`title`、`relative_path`、`original_filename`、`size_bytes`、`transcript`、`scanned_at`、`index`。视频文件保存到 `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`。不把视频明细混入 `followings.json`。
 - 删除 UP 主时移除其 `followings.json` 登记和对应 JSONL 视频索引，保留 `SortedMp4/<UP名称>/` 下的实际视频文件。
+- 单视频下载保存到 `<knowledge_base_root>/OtherVideos/`，索引为 `<knowledge_base_root>/OtherVideos/videos.jsonl`，不写入 `UpList` 或自动追踪清单。
 - `tmp/` 不存正式数据；`logs/` 不记录令牌、Cookie、凭据或完整 OpenCLI 原始输出。
 
 ## 跨平台与验证

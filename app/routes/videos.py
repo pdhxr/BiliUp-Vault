@@ -4,11 +4,12 @@ from pydantic import BaseModel, Field
 from core.configuration import KnowledgeBaseConfigurationError
 from core.download_progress import progress_rows
 from core.opencli_videos import OpenCliVideoError
+from core.single_video_download import queue_single_video_download
 from core.video_download import queue_downloads
 from core.video_batch_sync import batch_sync_progress, start_batch_sync
 from core.video_batch_track_download import batch_track_download_progress, start_batch_track_download
 from core.video_errors import FollowingNotFoundError
-from core.video_sync import list_up_videos, refresh_up_videos
+from core.video_sync import list_up_videos
 
 
 router = APIRouter(prefix="/api")
@@ -33,6 +34,10 @@ class BatchTrackDownloadRequest(BaseModel):
     since_date: str = Field(default="", max_length=10)
 
 
+class SingleVideoDownloadRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=1000)
+
+
 def _not_found(exc: FollowingNotFoundError) -> HTTPException:
     return HTTPException(status_code=404, detail=str(exc))
 
@@ -50,10 +55,16 @@ def get_up_videos(up_id: str) -> list[dict]:
 
 
 @router.post("/up/{up_id}/videos/refresh")
-def refresh_videos(up_id: str, request: RefreshVideosRequest | None = None) -> list[dict]:
-    params = request or RefreshVideosRequest()
+def refresh_videos(up_id: str, request: RefreshVideosRequest | None = None) -> dict[str, object]:
+    _ = request or RefreshVideosRequest()
     try:
-        return refresh_up_videos(up_id, page=params.page, limit=params.limit)
+        return start_batch_sync(
+            [up_id],
+            max_pages=1,
+            max_new_videos=30,
+            limit=30,
+            continue_history=True,
+        )
     except FollowingNotFoundError as exc:
         raise _not_found(exc) from exc
     except OpenCliVideoError as exc:
@@ -109,6 +120,21 @@ def download_videos(request: DownloadVideosRequest) -> dict[str, object]:
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"jobs": jobs}
+
+
+@router.post("/single-video/download")
+def download_single_video(request: SingleVideoDownloadRequest) -> dict[str, object]:
+    try:
+        job = queue_single_video_download(request.url)
+    except KnowledgeBaseConfigurationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OpenCliVideoError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="无法准备单视频下载目录") from exc
+    return {"job": job}
 
 
 @router.get("/videos/download-progress")

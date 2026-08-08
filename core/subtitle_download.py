@@ -15,6 +15,7 @@ from core.repositories.videos import list_videos, mark_transcript
 _subtitle_fetching_paths: set[str] = set()
 _subtitle_fetching_lock = Lock()
 _subtitle_download_lock = Lock()
+_MAX_FETCH_ATTEMPTS = 2
 
 
 def transcript_path(video_path: Path) -> Path:
@@ -45,13 +46,20 @@ def download_subtitle(bvid: str, video_path: Path) -> bool:
         with _subtitle_download_lock:
             if has_transcript(video_path):
                 return True
-            rows = fetch_video_subtitles(bvid)
+            rows: list[dict] = []
+            for attempt in range(_MAX_FETCH_ATTEMPTS):
+                try:
+                    rows = fetch_video_subtitles(bvid)
+                    break
+                except OpenCliVideoError:
+                    if attempt + 1 == _MAX_FETCH_ATTEMPTS:
+                        return False
             content = _markdown(video_path, rows)
             if not content:
                 return False
             transcript_path(video_path).write_text(content, encoding="utf-8")
             return True
-    except (OpenCliVideoError, OSError, ValueError):
+    except (OSError, ValueError):
         return False
 
 

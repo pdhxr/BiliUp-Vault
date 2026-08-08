@@ -21,6 +21,7 @@
 9. 用户可以刷新已登记 UP 的视频信息列表。
 10. 用户可以在第二个页签选择 UP、选择视频并下载到知识库的视频目录。
 11. 用户可以填写起始日期，对“自动追踪下载”列已勾选的 UP 执行批量追踪，并自动下载期限内所有尚未下载的视频。
+12. “其他功能”页签可以显示当前知识库目录、通过系统目录选择器重新保存目录、打开知识库目录或单视频目录，并下载未纳入 UP 追踪的单个视频。
 
 ### 不包含
 
@@ -56,7 +57,7 @@
 
 ### 4.2 首次知识库设置
 
-- `GET /api/setup-status` 返回知识库是否已配置。
+- `GET /api/setup-status` 返回知识库是否已配置；已配置时返回 `knowledge_base_root`，供“其他功能”页签显示当前目录。
 - `POST /api/setup/select-library` 调用当前系统的原生目录选择器；用户取消时不写入配置。
 - 所选目录必须已经存在且可写；验证失败时不创建半成品配置。
 - 配置文件固定在 macOS `~/Library/Application Support/BiliUp/config.json` 或 Windows `%LOCALAPPDATA%\BiliUp\config.json`。
@@ -73,18 +74,18 @@
 - `followings.json` 中没有视频统计字段时，统计列显示为 `0 / 0`，最后同步时间显示为 `-`。
 - 自动追踪下载开关变更后立即保存到当前知识库的 `UpList/followings.json`；批量追踪并下载只处理管理列表中 `scheduled_tracking=true`（即“自动追踪下载”列已勾选）的全部 UP，不要求左侧主复选框。
 - 列表读取失败时不修改本地数据，页面显示可理解的错误信息。
-- 行同步调用视频列表刷新接口；批量同步只处理当前勾选的 UP，并按 BV 号增量合并新视频、保留已有下载状态。
+- 行同步与批量同步均在后台执行；行同步每次继续该 UP 的下一页，批量同步只处理当前勾选的 UP。两者均按 BV 号增量合并新视频、保留已有下载状态。
 - 删除按钮只对当前勾选的 UP 生效；确认后移除 `followings.json` 登记和对应 `UpList/<UP名称>.jsonl` 远端追踪清单，不删除 `SortedMp4/<UP名称>/videos.jsonl` 与实际视频文件。
 - 批量同步按钮默认可用；未勾选时点击后显示提示。任务执行期间显示“同步中…”并置灰批量同步按钮和所有行同步按钮，完成或失败后恢复初始可点击状态。
 
 ### 4.4 视频列表刷新
 
-- `POST /api/up/{up_id}/videos/refresh` 从 `page=1` 开始按时间倒序分页调用 `opencli bilibili user-videos <uid> -f json --limit 50 --page <n>`，最多查询 5 页。
-- 每页按 BV 号与本地索引增量去重；每次最多新增 20 条，连续两页没有新增或遇到不足一页时停止。新视频合并到 `<knowledge_base_root>/UpList/<UP名称>.jsonl`，保留已下载状态。
+- `POST /api/up/{up_id}/videos/refresh` 从请求页开始按时间倒序深度分页调用 `opencli bilibili user-videos <uid> -f json --limit 50 --page <n>`，最多查询 60 页，单次最多新增 10000 条；用于单个 UP 的完整历史补齐。
+- 每页按 BV 号与本地索引增量去重；已存在视频的完整页不能作为停止条件，需继续向更早页面查询；达到本次新增上限、遇到不足一页或达到配置的截止日期时停止。新视频合并到 `<knowledge_base_root>/UpList/<UP名称>.jsonl`，保留已下载状态。
 - `GET /api/up/{up_id}/videos` 返回本地索引，按发布时间倒序，并提供序号、日期、标题、BV 号、链接和下载状态。
 - 刷新成功后更新 `followings.json` 的 `total_count`、`synced_count`、`downloaded_count` 和 `last_sync_at`。
 - OpenCLI 不可用、超时或数据不可解析时不破坏已有视频索引，并返回可理解的错误。
-- `POST /api/up/videos/batch-refresh` 接收选中的 `up_ids`，后台串行执行上述渐进同步；`GET /api/up/videos/batch-refresh-progress` 返回完成数、当前 UP、新增数和失败数。
+- 单个 UP 刷新与 `POST /api/up/videos/batch-refresh` 均复用后台同步任务；单个刷新每次只追加一页（每页 30 条、最多新增 30 条），成功后保存下一页游标；到达末页后游标回到第一页，后者接收选中的 `up_ids` 并执行普通增量同步。`GET /api/up/videos/batch-refresh-progress` 返回完成数、当前 UP、当前页/页数上限、新增数和失败数；失败时页面显示该任务的错误信息并恢复按钮。
 
 ### 4.5 视频下载
 
@@ -98,7 +99,7 @@
 - 批量任务分为 `tracking` 和 `downloading` 两阶段，状态接口返回 `current_up`、`done/total`、`added_total`、`download_done/download_total`、`download_failed` 与错误计数；进入下载阶段后界面显示“下载中 已完成数/需要下载总数”，其中 `download_done` 只统计成功完成的视频；批量追踪按钮始终可用，缺少必要条件时点击后显示提示。
 - 下载进度记录在后台保留最多 30 分钟，前端允许隐藏进度面板；隐藏不会停止后台下载。
 - 同一 UP 的下载文件按 `<UP名称>_<日期>_<标题>.<扩展名>` 保存；文件名中的跨平台非法字符统一替换。
-- 视频下载后保留字幕查询和 sidecar 写入接口；当前接口可能因 B 站/OpenCLI 服务变化返回失败，失败不影响视频下载主流程。
+- UP 视频列表中选择下载与“其他功能”的单视频下载均在视频落盘后调用同一字幕查询与 sidecar 写入接口；OpenCLI 字幕查询短暂失败时自动重试一次，仍失败不影响视频下载主流程。
 - 下载失败不修改已下载标记；不实现语音转录或重新编码。
 
 ### 4.6 UP 删除
@@ -130,12 +131,20 @@
 - 本地视频库使用 `<knowledge_base_root>/SortedMp4/<UP名称>/videos.jsonl`，只有真实存在且大小大于零的视频才写入，每行包含 `bvid`、`date`（YYYYMMDD）、`title`、`relative_path`、`original_filename`、`size_bytes`、`transcript`、`scanned_at` 和 `index`。
 - 视频文件写入 `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`，文件名为 `<UP名称>_<YYYYMMDD>_<标题>.<扩展名>`；`relative_path` 始终相对知识库根目录。
 
+### 4.9 其他功能
+
+- “其他功能”页签打开时通过 `GET /api/setup-status` 显示当前 `knowledge_base_root`。
+- “选择并保存位置”复用首次设置的系统目录选择器和配置写入流程；用户取消选择时不修改配置。打开目录按钮分别调用 `POST /api/library/open-folder` 和 `POST /api/single-video/open-folder`，由系统适配层使用 Finder 或 Explorer 打开目录。
+- 单视频下载调用 `POST /api/single-video/download`，输入支持 B 站完整链接、`b23.tv` 短链接和 BV 号。core 先通过 `bilibili video` 获取 BV 号、标题、作者和发布时间，再复用现有后台下载、重试、文件发现、命名、字幕查询和统一进度接口。
+- 单视频文件保存到 `<knowledge_base_root>/OtherVideos/`，其本地索引保存到 `<knowledge_base_root>/OtherVideos/videos.jsonl`，不写入 `UpList`，不加入 UP 自动追踪。下载进度仍通过 `GET /api/videos/download-progress` 查询。
+
 ## 5. 非功能需求
 
 - 三层调用方向固定为：静态网页层 → FastAPI 路由层 → `core` 业务内核层。
 - 所有文件操作使用 `pathlib`。项目内部路径使用项目相对路径；用户选择的 `knowledge_base_root` 是配置中唯一允许保存的绝对路径。
 - Windows/macOS 差异仅在 `core/utils/system/` 中处理；核心功能与测试代码必须共用。
 - 服务仅监听 `127.0.0.1` 或 `localhost`。
+- 服务固定监听 `127.0.0.1:8765`。启动时检查本机监听服务，若通过 BiliUp 的公开接口确认是旧实例（包括旧版本的随机端口实例）则停止它并启动新实例；若 `8765` 的监听者不是 BiliUp，则保留其进程并返回端口占用错误。
 - 日志不得记录凭据、Cookie、令牌或完整 OpenCLI 原始输出。
 
 ## 6. 验收标准

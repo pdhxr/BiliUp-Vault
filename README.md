@@ -4,11 +4,12 @@ BiliUp 是一个跨 macOS 和 Windows 运行的本地 B 站视频知识库工具
 
 ## 功能概览
 
-当前页面包含两个主要模块：
+当前页面包含三个功能页签：
 
 - **UP 主管理**：搜索并登记 UP 主，查看 UP 信息和视频统计，刷新视频列表，设置自动追踪下载，批量同步或删除登记。
 - **UP 主视频下载**：查看 UP 的视频清单，下载单个或多个视频，按起始日期批量追踪并下载未下载视频。
-- **本地索引与字幕接口**：视频和索引保存在用户选择的知识库目录中；下载流程会尝试调用字幕接口，接口失败不影响视频下载。
+- **其他功能**：查看/重新选择视频知识库目录，打开知识库或单视频目录，并通过 B 站链接、短链接或 BV 号下载未纳入 UP 追踪的单个视频。
+- **本地索引与字幕脚本**：UP 视频列表中选择下载与“其他功能”的单视频下载，都会在视频落盘后尝试获取官方字幕，并在视频旁写入 `__transcript.md`；字幕接口失败不影响视频下载。
 
 详细需求和业务规则见 [PRD.md](PRD.md)，架构和模块边界见 [ARCHITECTURE.md](ARCHITECTURE.md)。源码验证命令见 [VerifyGuide.md](VerifyGuide.md)。
 
@@ -44,6 +45,8 @@ yt-dlp --version
 
 OpenCLI 的 Daemon、Extension 和 Connectivity 检查正常后，BiliUp 才能搜索、刷新和下载。BiliUp 会自动查找常见安装位置，并以后台窗口方式调用 OpenCLI。
 
+应用固定使用 `http://127.0.0.1:8765/`。再次启动时，应用会检查本机的监听服务；只有能确认身份为旧 BiliUp 的服务才会被停止，再由新实例接管固定端口。若 `8765` 属于其他程序，应用不会自动终止它。
+
 ## 使用安装包
 
 ### macOS
@@ -72,11 +75,13 @@ Windows 安装包必须在 Windows 原生环境构建；构建脚本已在 Windo
 <知识库目录>/UpList/<UP名称>.jsonl
 <知识库目录>/SortedMp4/<UP名称>/videos.jsonl
 <知识库目录>/SortedMp4/<UP名称>/<YYYYMM>/<视频文件>
+<知识库目录>/OtherVideos/videos.jsonl
+<知识库目录>/OtherVideos/<视频文件>
 ```
 
 - `followings.json` 保存 UP 登记和管理状态。
 - `UpList/<UP名称>.jsonl` 保存 B 站视频追踪信息；`SortedMp4/<UP名称>/videos.jsonl` 保存本地视频索引，两者独立维护。
-- `transcript` 字段记录字幕 sidecar 状态；字幕接口当前受 B 站/OpenCLI 服务变化影响，失败时保持为 `false`，不影响视频下载。
+- `transcript` 字段记录视频旁 `__transcript.md` 字幕脚本状态；UP 视频下载和单视频下载共用字幕下载逻辑。OpenCLI 短暂失败时会自动重试一次；仍失败则保持为 `false`，不影响视频下载。
 - 应用配置保存在 macOS `~/Library/Application Support/BiliUp/config.json` 或 Windows `%LOCALAPPDATA%\BiliUp\config.json`，记录知识库目录和批量追踪起始日期。
 
 项目根目录中已有的旧 `UpList/` 不会自动迁移，后续数据以用户选择的知识库目录为准。
@@ -137,4 +142,4 @@ Windows 生成 EXE 目录（必须在 Windows 原生环境执行）：
 
 - OpenCLI、Node.js、Chrome 扩展、yt-dlp 和 B 站浏览器登录尚未由安装包自动处理。
 - macOS 包尚未签名、公证。Windows EXE 已在 Windows 11 原生环境完成 PyInstaller 构建与启动冒烟验证；代码签名与 SmartScreen 白名单仍待处理。
-- 当前版本尚未提供在 WebUI 中更换已选知识库目录的设置页。
+- 第三个页签的单视频下载统一写入 `OtherVideos/`，不会加入 UP 自动追踪列表。

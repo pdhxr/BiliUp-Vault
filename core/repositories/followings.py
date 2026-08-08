@@ -103,6 +103,23 @@ def update_video_stats(
     raise ValueError(f"未找到 UP {normalized_uid}")
 
 
+def set_next_sync_page(uid: str, page: int, root: Path = Path("UpList")) -> dict:
+    """保存手动同步的下一页游标，不暴露到管理列表。"""
+    json_path = root / "followings.json"
+    markdown_path = root / "bilibili-up-followings.md"
+    normalized_uid = str(uid).strip()
+    with _lock:
+        rows = _load(json_path)
+        for row in rows:
+            if str(row.get("uid")) != normalized_uid:
+                continue
+            row["next_sync_page"] = max(1, int(page))
+            _write_atomically(json_path, json.dumps(rows, ensure_ascii=False, indent=2) + "\n")
+            _write_atomically(markdown_path, _markdown(rows))
+            return row
+    raise ValueError(f"未找到 UP {normalized_uid}")
+
+
 def set_scheduled_tracking(uid: str, enabled: bool, root: Path = Path("UpList")) -> dict:
     """更新 UP 主是否参与批量自动追踪下载。"""
     json_path = root / "followings.json"
@@ -137,12 +154,13 @@ def save(uid: str, nickname: str, bio: str, root: Path = Path("UpList")) -> tupl
                 row.setdefault("total_count", 0)
                 row.setdefault("synced_count", 0)
                 row.setdefault("downloaded_count", 0)
+                row.setdefault("next_sync_page", 1)
                 _write_atomically(json_path, json.dumps(rows, ensure_ascii=False, indent=2) + "\n")
                 _write_atomically(markdown_path, _markdown(rows))
                 return row, "updated"
         now = _timestamp()
         record = dict(zip(_fields, (normalized_uid, normalized_nickname, normalized_bio, True, now, now)))
-        record.update({"total_count": 0, "synced_count": 0, "downloaded_count": 0})
+        record.update({"total_count": 0, "synced_count": 0, "downloaded_count": 0, "next_sync_page": 1})
         rows.append(record)
         _write_atomically(json_path, json.dumps(rows, ensure_ascii=False, indent=2) + "\n")
         _write_atomically(markdown_path, _markdown(rows))

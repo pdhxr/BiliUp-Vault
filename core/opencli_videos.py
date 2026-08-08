@@ -83,6 +83,43 @@ def _subtitle_items(output: str) -> list[dict]:
     return result
 
 
+def _video_metadata(output: str) -> dict[str, str]:
+    """标准化 ``opencli bilibili video`` 的字段列表输出。"""
+    data = _parse_json_output(output)
+    if isinstance(data, list):
+        fields = {
+            str(item.get("field", "")).strip(): item.get("value", "")
+            for item in data
+            if isinstance(item, dict) and item.get("field")
+        }
+    elif isinstance(data, dict):
+        candidate = data.get("data", data)
+        fields = candidate if isinstance(candidate, dict) else {}
+    else:
+        fields = {}
+    if not fields:
+        raise OpenCliVideoError("OpenCLI 返回的视频信息格式不正确")
+    bvid = str(fields.get("bvid") or fields.get("bv_id") or "").strip()
+    title = str(fields.get("title") or "").strip()
+    author = str(fields.get("author") or "").strip()
+    owner = fields.get("owner")
+    nickname = str(owner.get("name", "") if isinstance(owner, dict) else "").strip()
+    if not nickname and author:
+        nickname = author.split(" (mid:", 1)[0].strip()
+    publish_time = str(
+        fields.get("publish_time")
+        or fields.get("pubdate")
+        or fields.get("date")
+        or ""
+    ).strip()
+    return {
+        "bvid": bvid,
+        "title": title,
+        "nickname": nickname or "单视频",
+        "publish_time": publish_time,
+    }
+
+
 def fetch_user_videos(uid: str, *, page: int = 1, limit: int = 50) -> list[dict]:
     try:
         result = run_opencli(
@@ -115,6 +152,25 @@ def fetch_video_subtitles(bvid: str) -> list[dict]:
     if result.returncode != 0:
         raise OpenCliVideoError("视频字幕获取失败，请确认 OpenCLI 已连接到 B 站")
     return _subtitle_items((result.stdout or "") + "\n" + (result.stderr or ""))
+
+
+def fetch_video_metadata(video_ref: str) -> dict[str, str]:
+    """通过 OpenCLI 获取单视频的 BV 号、标题、作者和发布时间。"""
+    reference = str(video_ref or "").strip()
+    if not reference:
+        raise ValueError("请输入 B 站视频链接或 BV 号")
+    try:
+        result = run_opencli(
+            ["bilibili", "video", reference, "-f", "json", "--window", "background"],
+            timeout=120,
+        )
+    except FileNotFoundError as exc:
+        raise OpenCliVideoError("未找到 OpenCLI，请先安装并配置 OpenCLI") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise OpenCliVideoError("视频信息获取超时，请重试") from exc
+    if result.returncode != 0:
+        raise OpenCliVideoError("视频信息获取失败，请确认 OpenCLI 已连接到 B 站")
+    return _video_metadata((result.stdout or "") + "\n" + (result.stderr or ""))
 
 
 def download_video(bvid: str, output_directory: str, *, quality: str = "best") -> str:

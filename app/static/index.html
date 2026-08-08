@@ -127,9 +127,9 @@
             <h2>视频库位置</h2>
             <p>设置独立的本地视频知识库。保存位置本身不会移动文件。</p>
             <div class="feature-row library-root-row">
-              <input class="library-root-input" id="library-root" type="text" placeholder="选择视频库根目录">
+              <input class="library-root-input" id="library-root" type="text" readonly placeholder="选择视频库根目录" aria-label="视频库根目录">
               <div class="feature-actions">
-                <button class="btn btn-primary" id="btn-save-library-root" type="button">保存位置</button>
+                <button class="btn btn-primary" id="btn-save-library-root" type="button">选择并保存位置</button>
                 <button class="btn btn-primary" id="btn-open-library-folder" type="button">打开保存目录</button>
               </div>
             </div>
@@ -145,6 +145,7 @@
               </div>
             </div>
           </article>
+          <div id="other-status" class="video-status" aria-live="polite"></div>
         </section>
       </section>
     </main>
@@ -177,6 +178,7 @@
   <script src="/static/js/up_search.js"></script>
   <script src="/static/js/download_progress.js"></script>
   <script src="/static/js/video_download.js"></script>
+  <script src="/static/js/other_features.js"></script>
   <script>
     const setup = document.querySelector('#setup');
     const dashboard = document.querySelector('#dashboard');
@@ -199,6 +201,7 @@
         tab.toggleAttribute('aria-current', active);
       });
       panels.forEach((panel) => { panel.hidden = panel.dataset.panel !== tabName; });
+      if (tabName === 'other' && window.otherFeatures) window.otherFeatures.load();
     }
     async function checkSetup() {
       try {

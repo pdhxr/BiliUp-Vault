@@ -12,10 +12,14 @@ from core.utils.system.directories import DirectoryPickerError, choose_directory
 
 def setup_status() -> dict[str, object]:
     try:
-        knowledge_base_root()
+        root = knowledge_base_root()
     except KnowledgeBaseConfigurationError as exc:
         return {"configured": False, "message": str(exc)}
-    return {"configured": True, "message": "视频知识库目录已设置"}
+    return {
+        "configured": True,
+        "message": "视频知识库目录已设置",
+        "knowledge_base_root": str(root),
+    }
 
 
 def choose_and_configure_library() -> Path | None:

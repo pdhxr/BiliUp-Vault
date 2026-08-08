@@ -7,7 +7,7 @@ from app.routes.setup import router as setup_router
 from app.routes.up import router
 from app.routes.videos import router as videos_router
 from core.utils.system.browser import open_browser_after_start
-from core.utils.system.network import available_local_port
+from core.utils.system.network import BILIUP_PORT, prepare_biliup_port, stop_existing_biliup_services
 from core.utils.system.resources import resource_path
 
 
@@ -30,7 +30,8 @@ def create_app() -> FastAPI:
 
 def main() -> None:
     host = "127.0.0.1"
-    port = available_local_port()
+    stop_existing_biliup_services()
+    port = prepare_biliup_port(BILIUP_PORT)
     open_browser_after_start(f"http://{host}:{port}")
     uvicorn.run(create_app(), host=host, port=port)
 

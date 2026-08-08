@@ -222,6 +222,14 @@ body {
 }
 .btn-sync-row:disabled { color: #9ca3af; cursor: not-allowed; }
 .btn-sync-row svg { width: 18px; height: 18px; }
+.btn-sync-row.is-syncing {
+  width: 64px;
+  padding: 0 7px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 12px;
+  white-space: nowrap;
+}
 
 .empty-state {
   display: flex;

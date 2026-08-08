@@ -175,11 +175,11 @@
   async function refresh(upId, button = refreshButton) {
     if (!upId) return [];
     const original = button.textContent;
-    const isRowButton = button.classList.contains('btn-sync-row');
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
-    if (!isRowButton) button.textContent = '刷新中…';
-    setStatus('正在从 B 站刷新视频列表…');
+    button.classList.add('is-syncing');
+    button.textContent = '同步中…';
+    setStatus('正在启动视频列表同步…');
     try {
       const response = await fetch(`/api/up/${encodeURIComponent(upId)}/videos/refresh`, {
         method: 'POST',
@@ -188,23 +188,23 @@
       });
       const data = await responseData(response);
       if (!response.ok) throw new Error(data.detail || '刷新视频列表失败');
-      if (upId === currentUpId) {
-        videos = Array.isArray(data) ? data : [];
-        render();
-      }
-      if (window.upManagement) await window.upManagement.load();
-      setStatus(`刷新完成，共 ${Array.isArray(data) ? data.length : 0} 个视频`);
-      upFeedback.textContent = `已刷新 ${upId} 的视频列表`;
+      if (data.status === 'busy') throw new Error('已有视频同步任务正在进行');
+      if (window.upManagement) window.upManagement.setSyncing(true);
+      upFeedback.textContent = `正在同步 ${upId} 的视频列表…`;
+      startBatchSyncPolling(button, original);
       return data;
     } catch (error) {
       setStatus(error.message, true);
       upFeedback.textContent = error.message;
       return [];
     } finally {
-      button.disabled = false;
-      button.removeAttribute('aria-busy');
-      if (!isRowButton) button.textContent = original;
-      updateButtons();
+      if (!batchSyncTimer) {
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+        button.classList.remove('is-syncing');
+        button.textContent = original;
+        updateButtons();
+      }
     }
   }
 
@@ -212,7 +212,11 @@
 
   function restoreBatchSyncButton(button, original) {
     button.textContent = original;
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+    button.classList.remove('is-syncing');
     if (window.upManagement) window.upManagement.setSyncing(false);
+    updateButtons();
   }
 
   async function pollBatchSync(button, original) {
@@ -222,9 +226,14 @@
       if (!response.ok) throw new Error(data.detail || '无法读取批量同步进度');
       if (data.running) {
         const current = data.current_up ? `：${data.current_up}` : '';
-        setStatus(`正在增量同步 ${data.done}/${data.total}${current}`);
-        upFeedback.textContent = `同步中 ${data.done}/${data.total}${current}`;
+        const page = Number(data.current_page || 0);
+        const maxPages = Number(data.max_pages || 0);
+        const pageText = page && maxPages ? `（第 ${page}/${maxPages} 页）` : '';
+        setStatus(`正在增量同步 ${data.done}/${data.total}${current}${pageText}`);
+        upFeedback.textContent = `同步中 ${data.done}/${data.total}${current}${pageText}`;
         button.textContent = '同步中…';
+        button.disabled = true;
+        button.classList.add('is-syncing');
         return;
       }
       if (batchSyncTimer) {
@@ -234,7 +243,17 @@
       restoreBatchSyncButton(button, original);
       await loadFollowings();
       if (window.upManagement) await window.upManagement.load();
+      if (currentUpId) await loadVideos(currentUpId);
       const errorSuffix = Number(data.errors || 0) ? `，${data.errors} 个失败` : '';
+      const firstError = Array.isArray(data.results)
+        ? data.results.find((item) => item.status === 'error')
+        : null;
+      if (firstError) {
+        const message = firstError.error || '视频同步失败，请检查 OpenCLI 与 B 站登录状态';
+        setStatus(message, true);
+        upFeedback.textContent = `同步失败：${message}`;
+        return;
+      }
       setStatus(`批量同步完成：新增 ${data.added_total || 0} 个视频${errorSuffix}`);
       upFeedback.textContent = `批量同步完成：新增 ${data.added_total || 0} 个视频${errorSuffix}`;
     } catch (error) {
@@ -419,6 +438,12 @@
     if (window.upManagement) await window.upManagement.load();
     setStatus('下载任务已完成');
   });
+  window.addEventListener('biliup:library-changed', async () => {
+    currentUpId = '';
+    videos = [];
+    await loadFollowings();
+    render();
+  });
   window.addEventListener('biliup:tracking-setting-changed', updateButtons);
   checkAll.addEventListener('change', () => {
     tableBody.querySelectorAll('.video-checkbox').forEach((input) => { input.checked = checkAll.checked; });
@@ -432,4 +457,5 @@
   }));
 
   window.upVideoSync = { refresh, batchRefresh: refreshAll };
+  pollBatchSync(batchSyncButton, batchSyncButton.textContent);
 }());
