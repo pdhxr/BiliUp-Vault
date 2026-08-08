@@ -80,8 +80,8 @@
 
 ### 4.4 视频列表刷新
 
-- `POST /api/up/{up_id}/videos/refresh` 从请求页开始按时间倒序深度分页调用 `opencli bilibili user-videos <uid> -f json --limit 50 --page <n>`，最多查询 60 页，单次最多新增 10000 条；用于单个 UP 的完整历史补齐。
-- 每页按 BV 号与本地索引增量去重；已存在视频的完整页不能作为停止条件，需继续向更早页面查询；达到本次新增上限、遇到不足一页或达到配置的截止日期时停止。新视频合并到 `<knowledge_base_root>/UpList/<UP名称>.jsonl`，保留已下载状态。
+- `POST /api/up/{up_id}/videos/refresh` 读取该 UP 保存的下一页游标，按时间倒序调用 `opencli bilibili user-videos <uid> -f json --limit 30 --page <n>`；每次只读取一页、最多新增 30 条。该页不足 30 条时，下一页游标回到第一页。
+- 视频按 BV 号与本地索引增量去重后合并到 `<knowledge_base_root>/UpList/<UP名称>.jsonl`，保留已有下载状态。
 - `GET /api/up/{up_id}/videos` 返回本地索引，按发布时间倒序，并提供序号、日期、标题、BV 号、链接和下载状态。
 - 刷新成功后更新 `followings.json` 的 `total_count`、`synced_count`、`downloaded_count` 和 `last_sync_at`。
 - OpenCLI 不可用、超时或数据不可解析时不破坏已有视频索引，并返回可理解的错误。
