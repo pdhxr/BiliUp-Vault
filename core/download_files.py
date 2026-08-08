@@ -6,6 +6,7 @@ from core.repositories.videos import safe_video_directory_name
 
 
 VIDEO_SUFFIXES = {".mp4", ".mkv", ".flv", ".webm"}
+ARTIFACT_SUFFIXES = {".jpg", ".jpeg", ".webp", ".m4a"}
 
 
 def directory_snapshot(directory: Path) -> set[Path]:
@@ -76,3 +77,29 @@ def rename_video(source: Path, directory: Path, nickname: str, uid: str, title: 
         return target
     source.replace(target)
     return target
+
+
+def rename_video_artifacts(directory: Path, bvid: str, video_path: Path) -> None:
+    """将本次下载遗留的封面和音频附件改为与视频相同的文件主名。"""
+    key = str(bvid).lower()
+    try:
+        candidates = list(directory.iterdir())
+    except OSError:
+        return
+    for source in candidates:
+        if not source.is_file() or key not in source.name.lower():
+            continue
+        if source.suffix.lower() not in ARTIFACT_SUFFIXES:
+            continue
+        suffix = source.suffix.lower()
+        target = (
+            video_path.with_name(f"{video_path.stem}_cover{suffix}")
+            if suffix in {".jpg", ".jpeg", ".webp"}
+            else video_path.with_suffix(suffix)
+        )
+        if source == target or target.exists():
+            continue
+        try:
+            source.replace(target)
+        except OSError:
+            continue

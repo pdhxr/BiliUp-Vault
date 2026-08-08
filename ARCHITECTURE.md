@@ -59,7 +59,7 @@
 
 批量追踪并下载：WebUI 读取配置中的起始日期，并把 UP 主管理页签“自动追踪下载”列已勾选的全部 UP 组成 `up_ids`；左侧主复选框不参与此功能。随后调用 `POST /api/up/videos/batch-track-download` → `core/video_batch_track_download.py`。该模块后台串行调用 `core/video_sync.py` 的截止日期分页刷新，收集每个 UP 的新视频并更新远端追踪清单；随后从完整视频列表筛选日期不早于起始日期且 `downloaded=false` 的视频（包含之前已登记但尚未下载的视频），交给 `core/video_download.py` 的下载队列。WebUI 通过 `GET /api/up/videos/batch-track-download-progress` 轮询 `tracking`/`downloading` 两阶段状态。下载阶段的 `download_done/download_total` 显示成功完成数/需要下载总数，`download_failed` 单独记录失败数。
 
-视频下载：WebUI → `POST /api/videos/download` → FastAPI videos route → `core/video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`。下载用例按 `best`、`720p`、`480p` 顺序重试，依据实际生成的视频文件确认成功；随后由 `core/subtitle_download.py` 尝试查询并写入相邻 `__transcript.md`，再由 core 同步更新两套视频索引和 `followings.json`。字幕接口失败不改变视频任务的成功状态。
+视频下载：WebUI → `POST /api/videos/download` → FastAPI videos route → `core/video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`。下载用例按 `best`、`720p`、`480p` 顺序重试，依据实际生成的视频文件确认成功；`core/download_files.py` 随后将同一 BV 号的封面改为 `<视频主名>_cover.<扩展名>`、音频附件改为与视频相同的文件主名。接着由 `core/subtitle_download.py` 尝试查询并写入相邻 `__transcript.md`，再由 core 同步更新两套视频索引和 `followings.json`。字幕接口失败不改变视频任务的成功状态。
 
 单视频下载：WebUI → `POST /api/single-video/download` → `core/single_video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/OtherVideos/`。任务不写入 `UpList`；同一视频已有有效文件时复用本地索引并只补充字幕状态，不重复下载。它与 UP 视频列表下载共用 `core/subtitle_download.py`，视频旁的 `__transcript.md` 是字幕成功的唯一事实来源。
 
