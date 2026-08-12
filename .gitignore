@@ -1,7 +1,6 @@
 # Local runtime and test data
 /tmp/
 /logs/
-/tests/
 /UpList/
 
 # Local configuration

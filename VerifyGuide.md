@@ -62,11 +62,11 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 python -m app.main
 ```
 
-该命令会启动本机 FastAPI 服务并自动选择可用端口。服务运行期间保持终端窗口打开；结束时按 `Ctrl+C`。
+该命令会固定启动在 `http://127.0.0.1:8765/`。服务运行期间保持终端窗口打开；结束时按 `Ctrl+C`。
 
 ### 检查和释放 macOS 端口
 
-BiliUp 优先使用 `8765`；如果端口已被旧版 BiliUp 或其他程序占用，服务会自动回退到随机可用端口。先查看占用进程：
+BiliUp 固定使用 `8765`。若端口被旧 BiliUp 占用，应用会在确认身份后自动停止旧实例；若被其他程序占用，应用会报错且不会终止该程序。遇到端口占用时，可先查看占用进程：
 
 ```bash
 lsof -nP -iTCP:8765 -sTCP:LISTEN
@@ -103,108 +103,110 @@ Get-NetTCPConnection -LocalPort 8765 -State Listen
 Stop-Process -Id <PID>
 ```
 
-如需固定端口进行命令行接口检查，可在项目根目录运行：
-
-```bash
-python -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000
-```
-
-另开一个终端窗口并进入项目根目录后，可执行以下接口检查：
+应用启动后，另开一个终端窗口并进入项目根目录，可执行以下接口检查：
 
 ### macOS / Linux
 
 ```bash
-curl -s http://127.0.0.1:8000/api/setup-status
-curl -s http://127.0.0.1:8000/api/followings
+curl -s http://127.0.0.1:8765/api/setup-status
+curl -s http://127.0.0.1:8765/api/followings
 ```
 
 检查 OpenCLI 状态及搜索接口：
 
 ```bash
-curl -s http://127.0.0.1:8000/api/runtime-status
-curl -s -X POST http://127.0.0.1:8000/api/up-search \
+curl -s http://127.0.0.1:8765/api/runtime-status
+curl -s -X POST http://127.0.0.1:8765/api/up-search \
   -H 'Content-Type: application/json' \
   -d '{"nickname":"示例昵称"}'
 
 # 将 <UP_ID> 替换为 followings.json 中的 uid；刷新会调用 OpenCLI 并写入视频索引
-curl -s http://127.0.0.1:8000/api/up/<UP_ID>/videos
-curl -s -X POST http://127.0.0.1:8000/api/up/<UP_ID>/videos/refresh \
+curl -s http://127.0.0.1:8765/api/up/<UP_ID>/videos
+curl -s -X POST http://127.0.0.1:8765/api/up/<UP_ID>/videos/refresh \
   -H 'Content-Type: application/json' \
   -d '{"page":1,"limit":50}'
 
 # 批量增量同步选中的 UP（替换为实际 UID）
-curl -s -X POST http://127.0.0.1:8000/api/up/videos/batch-refresh \
+curl -s -X POST http://127.0.0.1:8765/api/up/videos/batch-refresh \
   -H 'Content-Type: application/json' \
   -d '{"up_ids":["<UP_ID_1>","<UP_ID_2>"]}'
-curl -s http://127.0.0.1:8000/api/up/videos/batch-refresh-progress
+curl -s http://127.0.0.1:8765/api/up/videos/batch-refresh-progress
 
 # 读取/保存批量追踪起始日期（保存到应用 config.json）
-curl -s http://127.0.0.1:8000/api/settings/batch-track
-curl -s -X PUT http://127.0.0.1:8000/api/settings/batch-track \
+curl -s http://127.0.0.1:8765/api/settings/batch-track
+curl -s -X PUT http://127.0.0.1:8765/api/settings/batch-track \
   -H 'Content-Type: application/json' \
   -d '{"since_date":"2026-07-01"}'
 
 # 保存某个 UP 是否参与自动追踪下载（替换为实际 UID）
-curl -s -X POST http://127.0.0.1:8000/api/followings/tracking \
+curl -s -X POST http://127.0.0.1:8765/api/followings/tracking \
   -H 'Content-Type: application/json' \
   -d '{"up_id":"<UP_ID_1>","scheduled_tracking":true}'
 
 # 按 config.json 中保存的起始日期批量追踪并下载“自动追踪下载”列已启用的 UP（替换为实际 UID）
-curl -s -X POST http://127.0.0.1:8000/api/up/videos/batch-track-download \
+curl -s -X POST http://127.0.0.1:8765/api/up/videos/batch-track-download \
   -H 'Content-Type: application/json' \
   -d '{"up_ids":["<UP_ID_1>","<UP_ID_2>"]}'
-curl -s http://127.0.0.1:8000/api/up/videos/batch-track-download-progress
+curl -s http://127.0.0.1:8765/api/up/videos/batch-track-download-progress
 
 # 删除选中的 UP 登记和视频索引；不会删除 SortedMp4 中的实际视频文件
-curl -s -X POST http://127.0.0.1:8000/api/followings/delete \
+curl -s -X POST http://127.0.0.1:8765/api/followings/delete \
   -H 'Content-Type: application/json' \
   -d '{"up_ids":["<UP_ID_1>"]}'
 
 # 将 <BV_ID> 替换为刷新结果中的 bvid；下载在后台执行
-curl -s -X POST http://127.0.0.1:8000/api/videos/download \
+curl -s -X POST http://127.0.0.1:8765/api/videos/download \
   -H 'Content-Type: application/json' \
   -d '{"up_id":"<UP_ID>","bvids":["<BV_ID>"]}'
-curl -s http://127.0.0.1:8000/api/videos/download-progress
+curl -s http://127.0.0.1:8765/api/videos/download-progress
 ```
 
 ### Windows PowerShell
 
 ```powershell
-curl.exe -s http://127.0.0.1:8000/api/setup-status
-curl.exe -s http://127.0.0.1:8000/api/followings
-curl.exe -s http://127.0.0.1:8000/api/runtime-status
-curl.exe -s -X POST http://127.0.0.1:8000/api/up-search `
+curl.exe -s http://127.0.0.1:8765/api/setup-status
+curl.exe -s http://127.0.0.1:8765/api/followings
+curl.exe -s http://127.0.0.1:8765/api/runtime-status
+curl.exe -s -X POST http://127.0.0.1:8765/api/up-search `
   -H "Content-Type: application/json" `
   -d '{"nickname":"示例昵称"}'
-curl.exe -s http://127.0.0.1:8000/api/up/<UP_ID>/videos
-curl.exe -s -X POST http://127.0.0.1:8000/api/up/<UP_ID>/videos/refresh `
+curl.exe -s http://127.0.0.1:8765/api/up/<UP_ID>/videos
+curl.exe -s -X POST http://127.0.0.1:8765/api/up/<UP_ID>/videos/refresh `
   -H "Content-Type: application/json" `
   -d '{"page":1,"limit":50}'
-curl.exe -s -X POST http://127.0.0.1:8000/api/up/videos/batch-refresh `
+curl.exe -s -X POST http://127.0.0.1:8765/api/up/videos/batch-refresh `
   -H "Content-Type: application/json" `
   -d '{"up_ids":["<UP_ID_1>","<UP_ID_2>"]}'
-curl.exe -s http://127.0.0.1:8000/api/up/videos/batch-refresh-progress
-curl.exe -s http://127.0.0.1:8000/api/settings/batch-track
-curl.exe -s -X PUT http://127.0.0.1:8000/api/settings/batch-track `
+curl.exe -s http://127.0.0.1:8765/api/up/videos/batch-refresh-progress
+curl.exe -s http://127.0.0.1:8765/api/settings/batch-track
+curl.exe -s -X PUT http://127.0.0.1:8765/api/settings/batch-track `
   -H "Content-Type: application/json" `
   -d '{"since_date":"2026-07-01"}'
-curl.exe -s -X POST http://127.0.0.1:8000/api/followings/tracking `
+curl.exe -s -X POST http://127.0.0.1:8765/api/followings/tracking `
   -H "Content-Type: application/json" `
   -d '{"up_id":"<UP_ID_1>","scheduled_tracking":true}'
-curl.exe -s -X POST http://127.0.0.1:8000/api/up/videos/batch-track-download `
+curl.exe -s -X POST http://127.0.0.1:8765/api/up/videos/batch-track-download `
   -H "Content-Type: application/json" `
   -d '{"up_ids":["<UP_ID_1>","<UP_ID_2>"]}'
-curl.exe -s http://127.0.0.1:8000/api/up/videos/batch-track-download-progress
-curl.exe -s -X POST http://127.0.0.1:8000/api/followings/delete `
+curl.exe -s http://127.0.0.1:8765/api/up/videos/batch-track-download-progress
+curl.exe -s -X POST http://127.0.0.1:8765/api/followings/delete `
   -H "Content-Type: application/json" `
   -d '{"up_ids":["<UP_ID_1>"]}'
-curl.exe -s -X POST http://127.0.0.1:8000/api/videos/download `
+curl.exe -s -X POST http://127.0.0.1:8765/api/videos/download `
   -H "Content-Type: application/json" `
   -d '{"up_id":"<UP_ID>","bvids":["<BV_ID>"]}'
-curl.exe -s http://127.0.0.1:8000/api/videos/download-progress
+curl.exe -s http://127.0.0.1:8765/api/videos/download-progress
 ```
 
 搜索和刷新接口需要 OpenCLI、Chrome 扩展和已登录的 B 站浏览器会话；搜索不会自动写入 `followings.json`，刷新会写入视频索引和 UP 统计。
+
+检查并升级 OpenCLI：
+
+```bash
+opencli --version
+npm install -g @jackwener/opencli@latest
+opencli doctor
+```
 
 视频下载还需要 `yt-dlp`。验证下载前先检查：
 
@@ -212,7 +214,7 @@ curl.exe -s http://127.0.0.1:8000/api/videos/download-progress
 yt-dlp --version
 ```
 
-单个下载任务失败时，后台会自动尝试 `best`、`720p`、`480p` 三种画质，进度接口中的 `error` 字段会显示 OpenCLI/yt-dlp 的简要错误；下载成功后会把视频移动为知识库 `SortedMp4/<UP名称>/<UP名称>_<日期>_<标题>.<扩展名>` 的格式。
+单个下载任务按 `480p`、`720p`、`1080p`、`best` 从低到高尝试，进度接口中的 `error` 字段会显示 OpenCLI/yt-dlp 的简要错误；下载成功后会按知识库规则命名视频，并尝试生成相邻的 `_cover.jpg` 或 `_cover.webp` 封面和 `__transcript.md` 字幕脚本。
 
 ## 4. 运行自动化测试
 
