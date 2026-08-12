@@ -4,6 +4,7 @@ from pathlib import Path
 from threading import Event
 
 from core.configuration import knowledge_base_root
+from core.cover_download import ensure_video_cover
 from core.download_files import (
     directory_snapshot,
     expected_video_name,
@@ -13,17 +14,15 @@ from core.download_files import (
     rename_video,
 )
 from core.download_progress import get_progress, now_iso, set_progress, watch_download_size
-from core.opencli_videos import OpenCliVideoError, download_video
+from core.opencli_videos import DOWNLOAD_QUALITY_FALLBACKS, OpenCliVideoError, download_video
 from core.repositories.followings import find, update_video_stats
-from core.repositories.library import find_local_video, record_download, set_transcript
+from core.repositories.library import find_local_video, record_download
 from core.repositories.videos import downloaded_count, list_videos, mark_downloaded, safe_video_directory_name
 from core.subtitle_download import download_subtitle
 from core.video_errors import FollowingNotFoundError
 
 
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="biliup-download")
-_MAX_DOWNLOAD_ATTEMPTS = 3
-_DOWNLOAD_QUALITIES = ("best", "720p", "480p")
 
 
 def _ensure_subtitle(bvid: str, video_path: Path) -> bool:
@@ -55,16 +54,9 @@ def _download_one(uid: str, bvid: str) -> None:
     indexed = find_local_video(root, nickname, bvid=bvid, title=title, date=date, uid=uid)
     if indexed:
         local_path = root / str(indexed["relative_path"])
+        ensure_video_cover(bvid, local_path)
         transcript = _ensure_subtitle(bvid, local_path)
-        set_transcript(
-            root,
-            nickname,
-            bvid=bvid,
-            title=title,
-            date=date,
-            transcript=transcript,
-            uid=uid,
-        )
+        record_download(root, nickname, local_path, bvid=bvid, title=title, date=date, transcript=transcript, uid=uid)
         rows = mark_downloaded(
             root / "UpList",
             nickname,
@@ -91,6 +83,7 @@ def _download_one(uid: str, bvid: str) -> None:
         return
     if expected.is_file() and expected.stat().st_size > 0:
         relative_path = expected.relative_to(root).as_posix()
+        ensure_video_cover(bvid, expected)
         transcript = _ensure_subtitle(bvid, expected)
         record_download(root, nickname, expected, bvid=bvid, title=title, date=date, transcript=transcript, uid=uid)
         rows = mark_downloaded(root / "UpList", nickname, bvid, relative_path, transcript=transcript)
@@ -119,8 +112,7 @@ def _download_one(uid: str, bvid: str) -> None:
     source = None
     last_error = ""
     try:
-        for attempt in range(_MAX_DOWNLOAD_ATTEMPTS):
-            quality = _DOWNLOAD_QUALITIES[min(attempt, len(_DOWNLOAD_QUALITIES) - 1)]
+        for attempt, quality in enumerate(DOWNLOAD_QUALITY_FALLBACKS):
             try:
                 download_video(bvid, str(directory), quality=quality)
             except OpenCliVideoError as exc:
@@ -130,7 +122,7 @@ def _download_one(uid: str, bvid: str) -> None:
                 break
             if not last_error:
                 last_error = "OpenCLI 下载完成，但未找到视频文件"
-            if attempt + 1 < _MAX_DOWNLOAD_ATTEMPTS:
+            if attempt + 1 < len(DOWNLOAD_QUALITY_FALLBACKS):
                 remove_partial_files(directory, bvid)
     finally:
         stop_monitor.set()
@@ -140,6 +132,7 @@ def _download_one(uid: str, bvid: str) -> None:
         raise OpenCliVideoError(last_error or "OpenCLI 下载完成，但未找到视频文件")
     target = rename_video(source, directory, nickname, uid, title, date)
     rename_video_artifacts(directory, bvid, target)
+    ensure_video_cover(bvid, target)
     relative_path = target.relative_to(root).as_posix()
     transcript = _ensure_subtitle(bvid, target)
     record_download(root, nickname, target, bvid=bvid, title=title, date=date, transcript=transcript, uid=uid)

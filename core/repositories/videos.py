@@ -92,6 +92,7 @@ def merge_videos(root: Path, nickname: str, incoming: list[dict]) -> list[dict]:
             "url": str(item.get("url", previous.get("url", ""))),
             "downloaded": bool(previous.get("downloaded", False)),
             "transcript": bool(previous.get("transcript", False)),
+            "cover": bool(previous.get("cover", False)),
             "local_filename": str(previous.get("local_filename", previous.get("file_path", ""))),
         }
     rows = _sorted(list(existing.values()))
@@ -142,14 +143,18 @@ def reconcile_downloaded(root: Path, nickname: str, local_lookup) -> list[dict]:
         local = local_lookup(row)
         downloaded = bool(local)
         transcript = bool(local.get("transcript", False)) if local else False
+        cover = bool(local.get("cover", False)) if local else False
         filename = str(local.get("original_filename", "")) if local else ""
         if (
             row.get("downloaded") != downloaded
             or row.get("transcript", False) != transcript
+            or "cover" not in row
+            or row.get("cover", False) != cover
             or row.get("local_filename", "") != filename
         ):
             row["downloaded"] = downloaded
             row["transcript"] = transcript
+            row["cover"] = cover
             row["local_filename"] = filename
             changed = True
     if changed:

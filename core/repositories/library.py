@@ -10,6 +10,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from core.download_files import has_cover_image
 from core.repositories.videos import safe_video_directory_name
 
 
@@ -167,6 +168,7 @@ def _record_download(
         "original_filename": video_path.name,
         "size_bytes": video_path.stat().st_size,
         "transcript": bool(transcript),
+        "cover": has_cover_image(video_path, bvid),
         "scanned_at": _timestamp(),
     }
     for index, row in enumerate(rows):
@@ -232,9 +234,11 @@ def index_existing_videos(
             )
         ), None)
         transcript = video_path.with_name(video_path.stem + "__transcript.md").is_file()
+        cover = has_cover_image(video_path, str(candidate.get("bvid", "")))
         if existing is not None:
-            if existing.get("transcript") != transcript:
+            if existing.get("transcript") != transcript or existing.get("cover") != cover:
                 existing["transcript"] = transcript
+                existing["cover"] = cover
                 changed = True
             continue
         rows.append(
@@ -246,6 +250,7 @@ def index_existing_videos(
                 "original_filename": video_path.name,
                 "size_bytes": video_path.stat().st_size,
                 "transcript": transcript,
+                "cover": cover,
                 "scanned_at": _timestamp(),
             }
         )

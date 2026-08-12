@@ -18,13 +18,14 @@ from core.following_delete import delete_followings
 from core.opencli_videos import DOWNLOAD_QUALITY_FALLBACKS, OpenCliVideoError, _items, download_video, fetch_user_videos, fetch_video_metadata, fetch_video_subtitles
 from core.repositories.followings import list_rows, save, set_scheduled_tracking
 from core.repositories.library import list_local_videos, record_download, record_other_download
-from core.single_video_download import queue_single_video_download
+from core.single_video_download import _run_job as run_single_video_job, queue_single_video_download
 from core.repositories.videos import list_videos, mark_downloaded, merge_videos
 from core.subtitle_download import download_subtitle, has_transcript
 from core.up_search import _parse_items, search_up
 from core.video_download import _download_one, queue_downloads
 from core.video_batch_track_download import _run as run_batch_track_download
 from core.video_batch_track_download import start_batch_track_download
+from core.video_cover_backfill import backfill_covers_for_up
 from core.video_reconcile import reconcile_up_videos
 from core.video_sync import refresh_up_videos, refresh_up_videos_with_details
 from core.utils.system.directories import choose_directory, open_directory
@@ -40,6 +41,60 @@ class CoreTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         shutil.rmtree(self.root, ignore_errors=True)
+
+    @patch("core.video_cover_backfill.ensure_video_cover")
+    def test_cover_backfill_processes_every_missing_cover_in_tracking_range(self, ensure_cover) -> None:
+        library_root = self.root / "library"
+        save("123", "示例 UP", "简介", library_root / "UpList")
+        merge_videos(
+            library_root / "UpList",
+            "示例 UP",
+            [
+                {"bvid": "BVnew1", "title": "范围内一", "pub_time": "2026-07-20"},
+                {"bvid": "BVnew2", "title": "范围内二", "pub_time": "2026-07-21"},
+                {"bvid": "BVold", "title": "范围外", "pub_time": "2026-06-30"},
+            ],
+        )
+        for bvid, title, date in (
+            ("BVnew1", "范围内一", "20260720"),
+            ("BVnew2", "范围内二", "20260721"),
+            ("BVold", "范围外", "20260630"),
+        ):
+            video_path = library_root / "SortedMp4" / "示例 UP" / date[:6] / f"{title}.mp4"
+            video_path.parent.mkdir(parents=True, exist_ok=True)
+            video_path.write_bytes(b"video")
+            record_download(
+                library_root,
+                "示例 UP",
+                video_path,
+                bvid=bvid,
+                title=title,
+                date=date,
+                transcript=False,
+                uid="123",
+            )
+            mark_downloaded(library_root / "UpList", "示例 UP", bvid, video_path.name)
+
+        def create_cover(_bvid, video_path):
+            video_path.with_name(f"{video_path.stem}_cover.jpg").write_bytes(b"image")
+            return True
+
+        ensure_cover.side_effect = create_cover
+        progress = []
+        result = backfill_covers_for_up(
+            "123",
+            "20260701",
+            root=library_root,
+            on_progress=lambda done, total, failed: progress.append((done, total, failed)),
+        )
+
+        self.assertEqual(result, {"total": 2, "succeeded": 2, "failed": 0})
+        self.assertEqual(ensure_cover.call_count, 2)
+        self.assertEqual(progress[-1], (2, 2, 0))
+        rows = {row["bvid"]: row for row in list_videos(library_root / "UpList", "示例 UP")}
+        self.assertTrue(rows["BVnew1"]["cover"])
+        self.assertTrue(rows["BVnew2"]["cover"])
+        self.assertFalse(rows["BVold"]["cover"])
 
     def test_normalizes_opencli_user_result(self) -> None:
         rows = _parse_items(json.dumps([{
@@ -75,12 +130,14 @@ class CoreTests(unittest.TestCase):
                 {"field": "title", "value": "单视频"},
                 {"field": "author", "value": "示例 UP (mid: 123)"},
                 {"field": "publish_time", "value": "2026-07-31 04:00"},
+                {"field": "thumbnail", "value": "https://i0.hdslb.com/bfs/archive/example.jpg"},
             ]),
             stderr="",
         )
         metadata = fetch_video_metadata("BV1abc234567")
         self.assertEqual(metadata["nickname"], "示例 UP")
         self.assertEqual(metadata["publish_time"], "2026-07-31 04:00")
+        self.assertEqual(metadata["thumbnail"], "https://i0.hdslb.com/bfs/archive/example.jpg")
         self.assertEqual(run.call_args.args[0][-2:], ["--window", "background"])
 
     @patch("core.opencli_videos.run_opencli")
@@ -124,6 +181,37 @@ class CoreTests(unittest.TestCase):
         job = queue_single_video_download("BV1abc234567")
         self.assertEqual(job["status"], "queued")
         submit.assert_called_once()
+
+    @patch("core.single_video_download.download_subtitle", return_value=False)
+    @patch("core.single_video_download.ensure_video_cover")
+    @patch("core.single_video_download.download_video")
+    @patch("core.single_video_download.knowledge_base_root")
+    def test_single_video_download_saves_metadata_cover(self, configured_root, opencli_download, cover, _subtitle) -> None:
+        library_root = self.root / "library"
+        configured_root.return_value = library_root
+
+        def fake_download(bvid: str, output_directory: str, *, quality: str) -> str:
+            Path(output_directory, f"{bvid}_视频.mp4").write_bytes(b"video")
+            return "status: success"
+
+        def save_cover(_bvid: str, video_path: Path, thumbnail_url: str) -> bool:
+            self.assertEqual(thumbnail_url, "https://i1.hdslb.com/bfs/archive/example.jpg")
+            video_path.with_name(video_path.stem + "_cover.jpg").write_bytes(b"cover")
+            return True
+
+        opencli_download.side_effect = fake_download
+        cover.side_effect = save_cover
+        run_single_video_job({
+            "bvid": "BV1abc234567",
+            "title": "视频",
+            "nickname": "示例 UP",
+            "publish_time": "2026-08-10 02:46",
+            "thumbnail": "https://i1.hdslb.com/bfs/archive/example.jpg",
+        })
+
+        row = json.loads((library_root / "OtherVideos/videos.jsonl").read_text(encoding="utf-8"))
+        self.assertTrue(row["cover"])
+        cover.assert_called_once()
 
     def test_source_resource_path_is_relative(self) -> None:
         self.assertEqual(resource_path("app/static"), Path("app/static"))
@@ -340,9 +428,10 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(jobs[0]["bvid"], "BV19UGw6hEV1")
         self.assertEqual(submit.call_args.args[1:], ("123", "BV19UGw6hEV1"))
 
+    @patch("core.video_download.ensure_video_cover", return_value=False)
     @patch("core.video_download._ensure_subtitle")
     @patch("core.video_download.knowledge_base_root")
-    def test_single_download_updates_local_transcript_for_existing_video(self, configured_root, ensure_subtitle) -> None:
+    def test_single_download_updates_local_transcript_for_existing_video(self, configured_root, ensure_subtitle, _cover) -> None:
         library_root = self.root / "library"
         up_list = library_root / "UpList"
         save("123", "示例 UP", "简介", up_list)

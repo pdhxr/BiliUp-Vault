@@ -77,7 +77,8 @@
         <td class="col-date">${escapeHtml(formatDate(video.pub_time))}</td>
         <td class="col-title" title="${escapeHtml(video.title)}">${escapeHtml(video.title)}</td>
         <td class="col-download video-download-state"><input class="status-checkbox" type="checkbox" disabled ${video.downloaded ? 'checked' : ''} aria-label="${video.downloaded ? '已下载' : '未下载'}"></td>
-        <td class="col-script"><input class="status-checkbox" type="checkbox" disabled ${video.transcript ? 'checked' : ''} aria-label="${video.transcript ? '已有字幕脚本' : '没有字幕脚本'}"></td>`;
+        <td class="col-script"><input class="status-checkbox" type="checkbox" disabled ${video.transcript ? 'checked' : ''} aria-label="${video.transcript ? '已有字幕脚本' : '没有字幕脚本'}"></td>
+        <td class="col-cover"><input class="status-checkbox" type="checkbox" disabled ${video.cover ? 'checked' : ''} aria-label="${video.cover ? '已有封面图片' : '没有封面图片'}"></td>`;
       row.querySelector('.video-checkbox').addEventListener('change', updateButtons);
       tableBody.appendChild(row);
     });
@@ -348,6 +349,12 @@
           setStatus(message);
           upFeedback.textContent = message;
           batchButton.textContent = `追踪中 ${currentIndex}/${total}`;
+        } else if (data.phase === 'covering') {
+          const current = data.current_up ? `：${data.current_up}` : '';
+          const message = `补齐封面 ${data.cover_done || 0}/${data.cover_total || 0}${current}`;
+          setStatus(message);
+          upFeedback.textContent = message;
+          batchButton.textContent = `补齐封面 ${data.cover_done || 0}/${data.cover_total || 0}`;
         } else {
           const message = `下载中 ${data.download_done || 0}/${data.download_total || 0}`;
           setStatus(message);
@@ -362,8 +369,9 @@
       if (window.upManagement) await window.upManagement.load();
       const errorSuffix = Number(data.errors || 0) ? `，${data.errors} 个失败` : '';
       const downloadSummary = `下载 ${data.download_done || 0}/${data.download_total || 0}`;
-      setStatus(`批量追踪并下载完成：新增 ${data.added_total || 0} 个视频，${downloadSummary}${errorSuffix}`);
-      upFeedback.textContent = `批量追踪并下载完成：新增 ${data.added_total || 0} 个视频，${downloadSummary}${errorSuffix}`;
+      const coverSummary = `，封面补齐 ${data.cover_succeeded || 0}/${data.cover_total || 0}`;
+      setStatus(`批量追踪并下载完成：新增 ${data.added_total || 0} 个视频，${downloadSummary}${coverSummary}${errorSuffix}`);
+      upFeedback.textContent = `批量追踪并下载完成：新增 ${data.added_total || 0} 个视频，${downloadSummary}${coverSummary}${errorSuffix}`;
     } catch (error) {
       restoreBatchTrackButton(original);
       upFeedback.textContent = error.message;

@@ -136,6 +136,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn("正在增量同步", video_script.text)
         self.assertIn("正在追踪第", video_script.text)
         self.assertIn("下载中 ${data.download_done || 0}/${data.download_total || 0}", video_script.text)
+        self.assertIn("补齐封面 ${data.cover_done || 0}/${data.cover_total || 0}", video_script.text)
         self.assertIn("/api/up/videos/batch-refresh", video_script.text)
         self.assertIn("/api/up/videos/batch-track-download", video_script.text)
         self.assertIn("/api/up/videos/batch-track-download-progress", video_script.text)

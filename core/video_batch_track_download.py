@@ -14,6 +14,7 @@ from core.repositories.followings import find
 from core.video_download import queue_downloads
 from core.video_errors import FollowingNotFoundError
 from core.subtitle_download import queue_missing_subtitles_for_up
+from core.video_cover_backfill import backfill_covers_for_up
 from core.video_sync import refresh_up_videos_with_details
 
 
@@ -30,6 +31,10 @@ _state: dict[str, object] = {
     "download_done": 0,
     "download_failed": 0,
     "subtitle_queued": 0,
+    "cover_total": 0,
+    "cover_done": 0,
+    "cover_succeeded": 0,
+    "cover_failed": 0,
     "errors": 0,
     "started_at": "",
     "finished_at": "",
@@ -131,6 +136,10 @@ def start_batch_track_download(up_ids: list[str], since_date: str = "") -> dict[
             "download_done": 0,
             "download_failed": 0,
             "subtitle_queued": 0,
+            "cover_total": 0,
+            "cover_done": 0,
+            "cover_succeeded": 0,
+            "cover_failed": 0,
             "errors": 0,
             "started_at": _now(),
             "finished_at": "",
@@ -157,6 +166,9 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
                 "pending_videos": [],
                 "download_jobs": [],
                 "subtitle_jobs": 0,
+                "cover_total": 0,
+                "cover_succeeded": 0,
+                "cover_failed": 0,
                 "status": "ok",
             }
             _set(current_up=nickname, current_up_id=uid)
@@ -237,6 +249,45 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
             elif statuses and all(status == "success" for status in statuses):
                 result["status"] = "ok"
         _set(results=list(results))
+
+        root = knowledge_base_root()
+        _set(phase="covering", current_up="", current_up_id="")
+        for result in results:
+            if result.get("status") not in {"ok", "error"}:
+                continue
+            uid = str(result["up_id"])
+            _set(current_up=str(result["nickname"]), current_up_id=uid)
+            cover_state = _copy_state()
+            base_done = int(cover_state.get("cover_done", 0))
+            base_total = int(cover_state.get("cover_total", 0))
+            base_succeeded = int(cover_state.get("cover_succeeded", 0))
+            base_failed = int(cover_state.get("cover_failed", 0))
+
+            def update_cover_progress(done: int, total: int, failed: int) -> None:
+                _set(
+                    cover_done=base_done + done,
+                    cover_total=base_total + total,
+                    cover_succeeded=base_succeeded + done - failed,
+                    cover_failed=base_failed + failed,
+                )
+
+            try:
+                cover_result = backfill_covers_for_up(
+                    uid,
+                    since_date,
+                    root=root,
+                    on_progress=update_cover_progress,
+                )
+                result.update({
+                    "cover_total": cover_result["total"],
+                    "cover_succeeded": cover_result["succeeded"],
+                    "cover_failed": cover_result["failed"],
+                })
+            except Exception as exc:
+                result["cover_error"] = str(exc)
+                with _state_lock:
+                    _state["cover_failed"] = int(_state["cover_failed"]) + 1
+            _set(results=list(results))
     finally:
         _set(running=False, phase="completed", current_up="", current_up_id="", finished_at=_now())
 

@@ -9,6 +9,9 @@ class OpenCliVideoError(RuntimeError):
     pass
 
 
+DOWNLOAD_QUALITY_FALLBACKS = ("480p", "720p", "1080p", "best")
+
+
 def _parse_json_output(output: str) -> object:
     """从 OpenCLI 输出中提取 JSON，兼容前后带日志或终端控制文本。"""
     try:
@@ -112,12 +115,21 @@ def _video_metadata(output: str) -> dict[str, str]:
         or fields.get("date")
         or ""
     ).strip()
+    thumbnail = str(fields.get("thumbnail") or fields.get("pic") or "").strip()
     return {
         "bvid": bvid,
         "title": title,
         "nickname": nickname or "单视频",
         "publish_time": publish_time,
+        "thumbnail": thumbnail,
     }
+
+
+def _video_metadata_failure(output: str) -> str:
+    """把 OpenCLI 视频查询错误转换为适合页面展示的简短提示。"""
+    if "-404" in output or "啥都木有" in output:
+        return "未找到该视频，请检查 BV 号及大小写是否正确，或确认视频仍可访问"
+    return "视频信息获取失败，请确认 OpenCLI 已连接到 B 站"
 
 
 def fetch_user_videos(uid: str, *, page: int = 1, limit: int = 50) -> list[dict]:
@@ -169,7 +181,8 @@ def fetch_video_metadata(video_ref: str) -> dict[str, str]:
     except subprocess.TimeoutExpired as exc:
         raise OpenCliVideoError("视频信息获取超时，请重试") from exc
     if result.returncode != 0:
-        raise OpenCliVideoError("视频信息获取失败，请确认 OpenCLI 已连接到 B 站")
+        output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+        raise OpenCliVideoError(_video_metadata_failure(output))
     return _video_metadata((result.stdout or "") + "\n" + (result.stderr or ""))
 
 

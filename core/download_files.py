@@ -7,6 +7,7 @@ from core.repositories.videos import safe_video_directory_name
 
 VIDEO_SUFFIXES = {".mp4", ".mkv", ".flv", ".webm"}
 ARTIFACT_SUFFIXES = {".jpg", ".jpeg", ".webp", ".m4a"}
+COVER_SUFFIXES = {".jpg", ".jpeg", ".webp"}
 
 
 def directory_snapshot(directory: Path) -> set[Path]:
@@ -103,3 +104,27 @@ def rename_video_artifacts(directory: Path, bvid: str, video_path: Path) -> None
             source.replace(target)
         except OSError:
             continue
+
+
+def has_cover_image(video_path: Path, bvid: str = "") -> bool:
+    """判断视频旁是否存在规范封面，兼容旧 BV 号命名的封面文件。"""
+    for suffix in COVER_SUFFIXES:
+        cover = video_path.with_name(f"{video_path.stem}_cover{suffix}")
+        try:
+            if cover.is_file() and cover.stat().st_size > 0:
+                return True
+        except OSError:
+            continue
+    key = str(bvid).lower()
+    if not key:
+        return False
+    try:
+        return any(
+            path.is_file()
+            and path.suffix.lower() in COVER_SUFFIXES
+            and key in path.name.lower()
+            and path.stat().st_size > 0
+            for path in video_path.parent.iterdir()
+        )
+    except OSError:
+        return False

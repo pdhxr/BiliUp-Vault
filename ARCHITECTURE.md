@@ -28,10 +28,12 @@
 - `core/video_reconcile.py`：协调远端追踪清单与本地视频库状态。
 - `core/video_index.py`：按网站元数据扫描已有月度视频文件，补建本地 `videos.jsonl`。
 - `core/video_batch_sync.py`：管理选中 UP 的后台批量增量同步和进度快照。
-- `core/video_batch_track_download.py`：从应用配置读取起始日期，接收前端按“自动追踪下载”列筛出的 UP，编排按日期批量追踪与下载；刷新后从每个 UP 的完整视频列表筛选期限内未下载的视频，交给下载队列，并提供两阶段进度快照。
+- `core/video_batch_track_download.py`：从应用配置读取起始日期，接收前端按“自动追踪下载”列筛出的 UP，编排按日期批量追踪、下载与封面补齐；刷新后从每个 UP 的完整视频列表筛选期限内未下载的视频，交给下载队列，并提供三阶段进度快照。
 - `core/video_download.py`：后台下载队列、文件命名和索引更新；通过进度模块更新任务状态。
 - `core/single_video_download.py`：解析单视频元数据并复用统一 OpenCLI 下载、文件发现、重试、命名、字幕和进度组件；单视频结果写入 `OtherVideos`，不创建 UP 追踪记录。
 - `core/subtitle_download.py`：调用 OpenCLI 获取字幕、写入 `__transcript.md` sidecar，并同步远端追踪清单和本地视频索引；单次 OpenCLI 错误自动重试一次，仍失败不阻断视频下载。
+- `core/cover_download.py`：从标准化视频元数据取得封面 URL，只允许 B 站图片 CDN，按镜像重试、校验图片内容并原子写入 `<视频主名>_cover.<扩展名>`；失败不阻断视频下载。
+- `core/video_cover_backfill.py`：筛选追踪起始日期之后已下载但缺少封面的 UP 视频，复用 `core/cover_download.py` 的统一接口逐一补齐，并刷新本地与远端索引；不设数量上限，不重新下载视频。
 - `core/download_files.py`：识别 OpenCLI 生成的视频文件、清理 `.part` 临时文件和执行跨平台安全命名；不包含 HTTP 或 OpenCLI 调用。
 - `core/download_progress.py`：下载状态存储、过期记录清理和下载目录大小监测，不包含 OpenCLI 或 HTTP 逻辑。
 - `core/repositories/videos.py`：读写 `<knowledge_base_root>/UpList/<UP名称>.jsonl` 远端追踪清单。
@@ -43,7 +45,7 @@
 
 首次设置：WebUI → FastAPI setup route → `core/setup.py` → 系统目录选择器 / 配置文件。打开“其他功能”页签时，WebUI 通过 `GET /api/setup-status` 读取并显示已配置的知识库目录，不修改配置。
 
-其他功能：WebUI → `app/static/js/other_features.js` → setup/videos 路由。目录按钮调用 `core/utils/system/directories.py` 的统一目录选择/打开接口；单视频下载由 videos route 调用 `core/single_video_download.py`，先复用 `core/opencli_videos.py` 的元数据适配，再复用下载队列的质量重试、文件发现、字幕和 `download_progress.py`，最后写入 `OtherVideos/videos.jsonl`。
+其他功能：WebUI → `app/static/js/other_features.js` → setup/videos 路由。目录按钮调用 `core/utils/system/directories.py` 的统一目录选择/打开接口；单视频下载由 videos route 调用 `core/single_video_download.py`，先复用 `core/opencli_videos.py` 的元数据适配，再复用质量重试、文件发现、字幕、封面和 `download_progress.py`，最后写入 `OtherVideos/videos.jsonl`。
 
 登记：WebUI → FastAPI UP route → `core/followings.py` → `<knowledge_base_root>/UpList` repository → `core/video_sync.py` 首批刷新 → 两套视频索引协调。登记成功但首批刷新失败时保留登记，并把可重试错误返回给前端。
 
@@ -57,13 +59,13 @@
 
 自动追踪设置：WebUI → `POST /api/followings/tracking` → `core/followings.py` → `UpList/followings.json`，保存每个 UP 的 `scheduled_tracking` 开关。批量日期设置：WebUI → `GET/PUT /api/settings/batch-track` → `core/setup.py` → `core/configuration.py`，保存到与知识库目录相同的应用 `config.json`。
 
-批量追踪并下载：WebUI 读取配置中的起始日期，并把 UP 主管理页签“自动追踪下载”列已勾选的全部 UP 组成 `up_ids`；左侧主复选框不参与此功能。随后调用 `POST /api/up/videos/batch-track-download` → `core/video_batch_track_download.py`。该模块后台串行调用 `core/video_sync.py` 的截止日期分页刷新，收集每个 UP 的新视频并更新远端追踪清单；随后从完整视频列表筛选日期不早于起始日期且 `downloaded=false` 的视频（包含之前已登记但尚未下载的视频），交给 `core/video_download.py` 的下载队列。WebUI 通过 `GET /api/up/videos/batch-track-download-progress` 轮询 `tracking`/`downloading` 两阶段状态。下载阶段的 `download_done/download_total` 显示成功完成数/需要下载总数，`download_failed` 单独记录失败数。
+批量追踪并下载：WebUI 读取配置中的起始日期，并把 UP 主管理页签“自动追踪下载”列已勾选的全部 UP 组成 `up_ids`；左侧主复选框不参与此功能。随后调用 `POST /api/up/videos/batch-track-download` → `core/video_batch_track_download.py`。该模块后台串行调用 `core/video_sync.py` 的截止日期分页刷新，收集每个 UP 的新视频并更新远端追踪清单；随后从完整视频列表筛选日期不早于起始日期且 `downloaded=false` 的视频（包含之前已登记但尚未下载的视频），交给 `core/video_download.py` 的下载队列。下载结束后，`core/video_cover_backfill.py` 对期限内所有已下载但缺少封面的本地 MP4 逐一调用既有封面接口，不设数量上限。WebUI 轮询 `tracking`、`downloading`、`covering` 三阶段状态及各自进度。
 
-视频下载：WebUI → `POST /api/videos/download` → FastAPI videos route → `core/video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`。下载用例按 `best`、`720p`、`480p` 顺序重试，依据实际生成的视频文件确认成功；`core/download_files.py` 随后将同一 BV 号的封面改为 `<视频主名>_cover.<扩展名>`、音频附件改为与视频相同的文件主名。接着由 `core/subtitle_download.py` 尝试查询并写入相邻 `__transcript.md`，再由 core 同步更新两套视频索引和 `followings.json`。字幕接口失败不改变视频任务的成功状态。
+视频下载：WebUI → `POST /api/videos/download` → FastAPI videos route → `core/video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`。UP 视频与单视频下载共用 `core/opencli_videos.py` 定义的 `480p`、`720p`、`1080p`、`best` 低到高回退顺序，优先节省存储，并依据实际生成的视频文件确认成功；`core/download_files.py` 先规范化 OpenCLI 遗留附件，`core/cover_download.py` 再按需补查元数据并从受限 CDN 下载封面。接着由 `core/subtitle_download.py` 尝试查询并写入相邻 `__transcript.md`，再由 core 同步更新两套视频索引和 `followings.json`。封面或字幕失败不改变视频任务的成功状态。
 
-单视频下载：WebUI → `POST /api/single-video/download` → `core/single_video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/OtherVideos/`。任务不写入 `UpList`；同一视频已有有效文件时复用本地索引并只补充字幕状态，不重复下载。它与 UP 视频列表下载共用 `core/subtitle_download.py`，视频旁的 `__transcript.md` 是字幕成功的唯一事实来源。
+单视频下载：WebUI → `POST /api/single-video/download` → `core/single_video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/OtherVideos/`。任务不写入 `UpList`；同一视频已有有效文件时复用本地索引并补充缺失的字幕或封面，不重复下载视频。它与 UP 视频列表下载共用 `core/subtitle_download.py` 和 `core/cover_download.py`。
 
-字幕状态：视频刷新扫描 `SortedMp4/<UP名称>/<YYYYMM>/` 中已有的 `__transcript.md`，更新本地索引的 `transcript`；批量追踪也会为已下载但缺少 sidecar 的视频保留补拉接口。
+媒体状态：视频刷新扫描 `SortedMp4/<UP名称>/<YYYYMM>/` 中已有的 `__transcript.md` 和封面图片，更新本地索引的 `transcript`、`cover`；再由协调层回写给视频列表。批量追踪也会为已下载但缺少字幕 sidecar 的视频保留补拉接口。
 
 下载进度：WebUI `download_progress.js` 每秒调用 `GET /api/videos/download-progress`；路由只返回 `core/download_progress.py` 的状态快照。后台任务在 OpenCLI 下载期间监测当前目录的新文件大小，状态记录保留最多 30 分钟，前端展示排队中、下载中、完成和失败。
 
@@ -83,4 +85,4 @@ UP 管理列表沿用参考页面的列结构，并增加可读的 UP 简介列�
 
 首次运行先通过 `/api/setup-status` 检查知识库配置。配置文件固定保存在 macOS `~/Library/Application Support/BiliUp/config.json` 或 Windows `%LOCALAPPDATA%\BiliUp\config.json`，其中保存用户选择的 `knowledge_base_root` 和 `batch_track_since_date`。未配置时网页不开放搜索和写入。
 
-知识库配置完成后，`/api/runtime-status` 检查 OpenCLI。系统适配层从当前 PATH 以及 Homebrew、npm、NVM、Volta 等平台常见位置发现可执行文件，并为子进程补齐 Node/OpenCLI 所需 PATH；未安装时由 WebUI 展示人工安装、Chrome 扩展和 B 站登录指引。
+知识库配置完成后，`/api/runtime-status` 检查 OpenCLI。OpenCLI 是安装包外的系统级 npm 依赖，当前兼容验证版本为 `1.8.6`；系统适配层从当前 PATH 以及 Homebrew、npm、NVM、Volta 等平台常见位置发现可执行文件，并为子进程补齐 Node/OpenCLI 所需 PATH。未安装时由 WebUI 展示人工安装、升级、Chrome 扩展和 B 站登录指引。

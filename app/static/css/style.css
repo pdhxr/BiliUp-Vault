@@ -184,7 +184,7 @@ body {
 .col-action { width: 70px; text-align: center !important; }
 .col-date { width: 120px; color: #6b7280; }
 .col-title { min-width: 220px; }
-.col-download, .col-script { width: 100px; text-align: center !important; }
+.col-download, .col-script, .col-cover { width: 100px; text-align: center !important; }
 
 .status-checkbox {
   width: 16px;

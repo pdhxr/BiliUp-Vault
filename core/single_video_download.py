@@ -11,16 +11,15 @@ from pathlib import Path
 from threading import Event
 
 from core.configuration import knowledge_base_root
-from core.download_files import directory_snapshot, expected_video_name, find_video_file, remove_partial_files, rename_video
+from core.cover_download import ensure_video_cover
+from core.download_files import directory_snapshot, find_video_file, has_cover_image, remove_partial_files, rename_video, rename_video_artifacts
 from core.download_progress import get_progress, now_iso, set_progress, watch_download_size
-from core.opencli_videos import OpenCliVideoError, download_video, fetch_video_metadata
+from core.opencli_videos import DOWNLOAD_QUALITY_FALLBACKS, OpenCliVideoError, download_video, fetch_video_metadata
 from core.repositories.library import find_other_video, record_other_download
 from core.subtitle_download import download_subtitle, has_transcript
 
 
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="biliup-single-download")
-_DOWNLOAD_QUALITIES = ("best", "720p", "480p")
-_MAX_DOWNLOAD_ATTEMPTS = 3
 _BV_PATTERN = re.compile(r"^BV[A-Za-z0-9]{6,}$", re.IGNORECASE)
 
 
@@ -65,8 +64,7 @@ def _run_job(metadata: dict[str, str]) -> None:
         source = None
         last_error = ""
         try:
-            for attempt in range(_MAX_DOWNLOAD_ATTEMPTS):
-                quality = _DOWNLOAD_QUALITIES[min(attempt, len(_DOWNLOAD_QUALITIES) - 1)]
+            for attempt, quality in enumerate(DOWNLOAD_QUALITY_FALLBACKS):
                 try:
                     download_video(bvid, str(directory), quality=quality)
                 except OpenCliVideoError as exc:
@@ -76,7 +74,7 @@ def _run_job(metadata: dict[str, str]) -> None:
                     break
                 if not last_error:
                     last_error = "OpenCLI 下载完成，但未找到视频文件"
-                if attempt + 1 < _MAX_DOWNLOAD_ATTEMPTS:
+                if attempt + 1 < len(DOWNLOAD_QUALITY_FALLBACKS):
                     remove_partial_files(directory, bvid)
         finally:
             stop_monitor.set()
@@ -84,6 +82,8 @@ def _run_job(metadata: dict[str, str]) -> None:
         if source is None:
             raise OpenCliVideoError(last_error or "OpenCLI 下载完成，但未找到视频文件")
         target = rename_video(source, directory, nickname, "single-video", title, date)
+        rename_video_artifacts(directory, bvid, target)
+        ensure_video_cover(bvid, target, metadata.get("thumbnail", ""))
         transcript = download_subtitle(bvid, target)
         entry = record_other_download(
             root,
@@ -111,17 +111,16 @@ def _run_existing_job(metadata: dict[str, str], existing: dict[str, object], roo
     date = _date_from_metadata(metadata.get("publish_time"))
     local_path = root / str(existing["relative_path"])
     try:
+        ensure_video_cover(bvid, local_path, metadata.get("thumbnail", ""))
         transcript = download_subtitle(bvid, local_path)
-        entry = existing
-        if transcript != bool(existing.get("transcript")):
-            entry = record_other_download(
-                root,
-                local_path,
-                bvid=bvid,
-                title=title,
-                date=date,
-                transcript=transcript,
-            )
+        entry = record_other_download(
+            root,
+            local_path,
+            bvid=bvid,
+            title=title,
+            date=date,
+            transcript=transcript,
+        )
         set_progress(
             bvid,
             status="success",
@@ -149,7 +148,13 @@ def queue_single_video_download(video_ref: str) -> dict[str, object]:
     date = _date_from_metadata(metadata.get("publish_time"))
     existing = find_other_video(root, bvid=bvid, title=title, date=date)
     if existing:
-        if existing.get("transcript") and has_transcript(root / str(existing["relative_path"])):
+        local_path = root / str(existing["relative_path"])
+        if (
+            existing.get("transcript")
+            and has_transcript(local_path)
+            and existing.get("cover")
+            and has_cover_image(local_path, bvid)
+        ):
             return set_progress(
                 bvid,
                 status="success",

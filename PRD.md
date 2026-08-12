@@ -42,7 +42,7 @@
 9. 用户在 UP 管理列表中点击行操作或批量刷新，从 OpenCLI 获取该 UP 的视频列表并保存索引。
 10. 用户勾选一个或多个 UP，点击“删除”并确认；系统删除登记和视频索引，但保留已下载视频文件。
 11. 用户切换到视频下载页签，选择 UP 和视频，点击下载；系统后台执行下载并反馈成功或失败状态。
-12. 用户填写起始日期并点击“批量追踪并下载”；系统先逐个刷新“自动追踪下载”列已勾选的全部 UP，再下载其视频列表中日期不早于该日期且 `downloaded=false` 的视频，并持续反馈两个阶段的进度。
+12. 用户填写起始日期并点击“批量追踪并下载”；系统先逐个刷新“自动追踪下载”列已勾选的全部 UP，再下载其视频列表中日期不早于该日期且 `downloaded=false` 的视频，最后为追踪范围内所有已有本地 MP4 但缺少封面的视频补齐封面，不设补齐数量上限，并持续反馈各阶段进度。
 
 ## 4. 功能需求
 
@@ -82,7 +82,7 @@
 
 - `POST /api/up/{up_id}/videos/refresh` 读取该 UP 保存的下一页游标，按时间倒序调用 `opencli bilibili user-videos <uid> -f json --limit 30 --page <n>`；每次只读取一页、最多新增 30 条。该页不足 30 条时，下一页游标回到第一页。
 - 视频按 BV 号与本地索引增量去重后合并到 `<knowledge_base_root>/UpList/<UP名称>.jsonl`，保留已有下载状态。
-- `GET /api/up/{up_id}/videos` 返回本地索引，按发布时间倒序，并提供序号、日期、标题、BV 号、链接和下载状态。
+- `GET /api/up/{up_id}/videos` 返回远端追踪清单，并用本地视频索引校准下载、字幕和封面状态；列表按发布时间倒序，提供序号、日期、标题、BV 号、链接和本地媒体状态。
 - 刷新成功后更新 `followings.json` 的 `total_count`、`synced_count`、`downloaded_count` 和 `last_sync_at`。
 - OpenCLI 不可用、超时或数据不可解析时不破坏已有视频索引，并返回可理解的错误。
 - 单个 UP 刷新与 `POST /api/up/videos/batch-refresh` 均复用后台同步任务；单个刷新每次只追加一页（每页 30 条、最多新增 30 条），成功后保存下一页游标；到达末页后游标回到第一页，后者接收选中的 `up_ids` 并执行普通增量同步。`GET /api/up/videos/batch-refresh-progress` 返回完成数、当前 UP、当前页/页数上限、新增数和失败数；失败时页面显示该任务的错误信息并恢复按钮。
@@ -91,15 +91,15 @@
 
 - `POST /api/videos/download` 接收 `up_id` 和一个或多个 `bvids`，后台提交下载任务。
 - 下载调用 `opencli bilibili download <bvid> --output <知识库目录>/SortedMp4/<UP名称>/<YYYYMM>/`。
-- 下载依赖用户单独安装的 `yt-dlp`。后台按 `best`、`720p`、`480p` 顺序最多重试 3 次；OpenCLI 返回失败状态时显示其简要错误，若实际生成有效视频文件则仍按成功处理。
+- 下载依赖用户单独安装的 `yt-dlp`。为节省存储空间，后台按 `480p`、`720p`、`1080p`、`best` 从低到高尝试，优先采用可下载的低分辨率档位；前一档不可用时自动升级，最后以 `best` 兼容没有常见分辨率档位的视频。OpenCLI 返回失败状态时显示其简要错误，若实际生成有效视频文件则仍按成功处理。
 - 下载任务通过 `GET /api/videos/download-progress` 查询状态；成功后更新远端追踪清单的下载状态，并在本地 `SortedMp4/<UP名称>/videos.jsonl` 登记相对文件路径、大小和扫描时间。
 - 第二个页签实时轮询并展示下载汇总和任务列表，至少显示视频标题、排队中/下载中/完成/失败状态；下载过程中显示已发现的文件大小，失败项显示错误提示。
 - `GET/PUT /api/settings/batch-track` 读写应用 `config.json` 中的 `batch_track_since_date`。视频下载页打开时读取该值，用户选择日期后立即保存。
 - “批量追踪并下载”接收前端根据管理列表“自动追踪下载”列生成的 `up_ids`；左侧主复选框只用于批量同步和删除，不参与此功能。追踪起始日期从应用配置读取（仍兼容请求中的 `since_date` 字段）。日期支持 `YYYY-MM-DD`，按自然日包含当天；先按 B 站发布时间倒序分页刷新，再从每个 UP 的完整视频列表中筛选日期不早于起始日期且 `downloaded=false` 的视频，已登记但尚未下载的视频也必须提交下载，不能只处理本轮新增视频。
-- 批量任务分为 `tracking` 和 `downloading` 两阶段，状态接口返回 `current_up`、`done/total`、`added_total`、`download_done/download_total`、`download_failed` 与错误计数；进入下载阶段后界面显示“下载中 已完成数/需要下载总数”，其中 `download_done` 只统计成功完成的视频；批量追踪按钮始终可用，缺少必要条件时点击后显示提示。
+- 批量任务分为 `tracking`、`downloading` 和 `covering` 三阶段。封面阶段只处理追踪起始日期之后、MP4 已存在且 `cover=false` 的视频，逐条复用统一封面下载接口，不重新下载 MP4，也不限制单次补齐数量；状态接口和界面分别显示下载与封面补齐进度。
 - 下载进度记录在后台保留最多 30 分钟，前端允许隐藏进度面板；隐藏不会停止后台下载。
 - 同一 UP 的下载文件按 `<UP名称>_<日期>_<标题>.<扩展名>` 保存；文件名中的跨平台非法字符统一替换。
-- OpenCLI/yt-dlp 在同一次下载中生成的 JPG/JPEG/WEBP 封面或 M4A 音频附件，若文件名含该视频 BV 号，则封面改为 `<视频主名>_cover.<扩展名>`、音频改为与视频相同的文件主名；找不到或无法安全改名时跳过，不影响视频下载。
+- OpenCLI/yt-dlp 在同一次下载中遗留的 JPG/JPEG/WEBP 封面或 M4A 音频附件，若文件名含该视频 BV 号，则先按视频主名规范化。若没有可用封面，core 从 `bilibili video` 元数据读取 `thumbnail`，通过受限的 B 站图片 CDN 镜像下载，并根据实际图片格式原子保存为 `<视频主名>_cover.jpg` 或 `<视频主名>_cover.webp`；封面获取失败不影响视频下载。
 - UP 视频列表中选择下载与“其他功能”的单视频下载均在视频落盘后调用同一字幕查询与 sidecar 写入接口；OpenCLI 字幕查询短暂失败时自动重试一次，仍失败不影响视频下载主流程。
 - 下载失败不修改已下载标记；不实现语音转录或重新编码。
 
@@ -128,15 +128,15 @@
 - 空简介保存为 `-`。新记录的 `scheduled_tracking` 为 `true`；`created_at` 与 `last_sync_at` 使用当前带时区的 ISO-8601 时间，以兼容参考格式。
 - 写入使用独占锁与原子替换，确保失败不会破坏已有 JSON。
 - 写入 JSON 成功后，重建 `<knowledge_base_root>/UpList/bilibili-up-followings.md`：表头固定为“序号、昵称、UP ID、简介”，序号从 1 连续递增。Markdown 只是派生视图，不能作为写入源。
-- 远端视频追踪清单使用 `<knowledge_base_root>/UpList/<UP名称>.jsonl`，每行包含 `date`、`title`、`bvid`、`url`、`downloaded`、`transcript`、`local_filename` 和 `index`。
-- 本地视频库使用 `<knowledge_base_root>/SortedMp4/<UP名称>/videos.jsonl`，只有真实存在且大小大于零的视频才写入，每行包含 `bvid`、`date`（YYYYMMDD）、`title`、`relative_path`、`original_filename`、`size_bytes`、`transcript`、`scanned_at` 和 `index`。
+- 远端视频追踪清单使用 `<knowledge_base_root>/UpList/<UP名称>.jsonl`，每行包含 `date`、`title`、`bvid`、`url`、`downloaded`、`transcript`、`cover`、`local_filename` 和 `index`。
+- 本地视频库使用 `<knowledge_base_root>/SortedMp4/<UP名称>/videos.jsonl`，只有真实存在且大小大于零的视频才写入，每行包含 `bvid`、`date`（YYYYMMDD）、`title`、`relative_path`、`original_filename`、`size_bytes`、`transcript`、`cover`、`scanned_at` 和 `index`。`cover` 根据视频旁的 `_cover` 图片或旧 BV 命名封面文件扫描更新。
 - 视频文件写入 `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`，文件名为 `<UP名称>_<YYYYMMDD>_<标题>.<扩展名>`；`relative_path` 始终相对知识库根目录。
 
 ### 4.9 其他功能
 
 - “其他功能”页签打开时通过 `GET /api/setup-status` 显示当前 `knowledge_base_root`。
 - “选择并保存位置”复用首次设置的系统目录选择器和配置写入流程；用户取消选择时不修改配置。打开目录按钮分别调用 `POST /api/library/open-folder` 和 `POST /api/single-video/open-folder`，由系统适配层使用 Finder 或 Explorer 打开目录。
-- 单视频下载调用 `POST /api/single-video/download`，输入支持 B 站完整链接、`b23.tv` 短链接和 BV 号。core 先通过 `bilibili video` 获取 BV 号、标题、作者和发布时间，再复用现有后台下载、重试、文件发现、命名、字幕查询和统一进度接口。
+- 单视频下载调用 `POST /api/single-video/download`，输入支持 B 站完整链接、`b23.tv` 短链接和 BV 号。core 先通过 `bilibili video` 获取 BV 号、标题、作者、发布时间和封面 URL，再复用现有后台下载、重试、文件发现、命名、字幕/封面获取和统一进度接口。
 - 单视频文件保存到 `<knowledge_base_root>/OtherVideos/`，其本地索引保存到 `<knowledge_base_root>/OtherVideos/videos.jsonl`，不写入 `UpList`，不加入 UP 自动追踪。下载进度仍通过 `GET /api/videos/download-progress` 查询。
 
 ## 5. 非功能需求

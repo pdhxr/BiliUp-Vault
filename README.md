@@ -7,9 +7,9 @@ BiliUp 是一个跨 macOS 和 Windows 运行的本地 B 站视频知识库工具
 当前页面包含三个功能页签：
 
 - **UP 主管理**：搜索并登记 UP 主，查看 UP 信息和视频统计，刷新视频列表，设置自动追踪下载，批量同步或删除登记。
-- **UP 主视频下载**：查看 UP 的视频清单，下载单个或多个视频，按起始日期批量追踪并下载未下载视频。
+- **UP 主视频下载**：查看 UP 的视频清单，下载单个或多个视频，按起始日期批量追踪并下载未下载视频，同时补齐追踪范围内本地视频缺少的封面；默认优先选择可下载的低分辨率档位以节省空间。
 - **其他功能**：查看/重新选择视频知识库目录，打开知识库或单视频目录，并通过 B 站链接、短链接或 BV 号下载未纳入 UP 追踪的单个视频。
-- **本地索引与字幕脚本**：UP 视频列表中选择下载与“其他功能”的单视频下载，都会在视频落盘后尝试获取官方字幕，并在视频旁写入 `__transcript.md`；字幕接口失败不影响视频下载。
+- **本地媒体索引**：UP 视频列表中选择下载与“其他功能”的单视频下载，都会在视频落盘后尝试获取官方字幕和封面图片；附加资源获取失败不影响视频下载。
 
 详细需求和业务规则见 [PRD.md](PRD.md)，架构和模块边界见 [ARCHITECTURE.md](ARCHITECTURE.md)。源码验证命令见 [VerifyGuide.md](VerifyGuide.md)。
 
@@ -17,11 +17,11 @@ BiliUp 是一个跨 macOS 和 Windows 运行的本地 B 站视频知识库工具
 
 安装包已包含 Python、FastAPI 和应用代码，普通用户不需要安装 Python、创建 `.venv` 或执行 `pip install`。以下组件需要用户在系统中准备：
 
-1. Google Chrome、Node.js 21 或更高版本。
-2. OpenCLI：
+1. Google Chrome、Node.js 20 或更高版本。
+2. OpenCLI。首次安装与升级均使用：
 
    ```bash
-   npm install -g @jackwener/opencli
+   npm install -g @jackwener/opencli@latest
    ```
 
 3. Chrome 中的 [OpenCLI 扩展](https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk)。
@@ -39,11 +39,12 @@ BiliUp 是一个跨 macOS 和 Windows 运行的本地 B 站视频知识库工具
 安装后可运行以下命令检查 OpenCLI 和 yt-dlp：
 
 ```bash
+opencli --version
 opencli doctor
 yt-dlp --version
 ```
 
-OpenCLI 的 Daemon、Extension 和 Connectivity 检查正常后，BiliUp 才能搜索、刷新和下载。BiliUp 会自动查找常见安装位置，并以后台窗口方式调用 OpenCLI。
+当前源码已使用 OpenCLI `1.8.6` 验证。版本低于 `1.8.6` 时先执行上面的升级命令；OpenCLI 的 Daemon、Extension 和 Connectivity 检查正常后，BiliUp 才能搜索、刷新和下载。BiliUp 会自动查找常见安装位置，并以后台窗口方式调用 OpenCLI。
 
 应用固定使用 `http://127.0.0.1:8765/`。再次启动时，应用会检查本机的监听服务；只有能确认身份为旧 BiliUp 的服务才会被停止，再由新实例接管固定端口。若 `8765` 属于其他程序，应用不会自动终止它。
 
@@ -81,7 +82,7 @@ Windows 安装包必须在 Windows 原生环境构建；构建脚本已在 Windo
 
 - `followings.json` 保存 UP 登记和管理状态。
 - `UpList/<UP名称>.jsonl` 保存 B 站视频追踪信息；`SortedMp4/<UP名称>/videos.jsonl` 保存本地视频索引，两者独立维护。
-- `transcript` 字段记录视频旁 `__transcript.md` 字幕脚本状态；UP 视频下载和单视频下载共用字幕下载逻辑。OpenCLI 短暂失败时会自动重试一次；仍失败则保持为 `false`，不影响视频下载。
+- `transcript` 与 `cover` 字段分别记录视频旁 `__transcript.md` 字幕脚本和 `<视频主名>_cover.<扩展名>` 封面状态；封面按实际图片格式保存为 JPG 或 WEBP。UP 视频下载和单视频下载共用字幕、封面获取逻辑；附加资源获取失败时对应字段保持为 `false`，不影响视频下载。
 - 应用配置保存在 macOS `~/Library/Application Support/BiliUp/config.json` 或 Windows `%LOCALAPPDATA%\BiliUp\config.json`，记录知识库目录和批量追踪起始日期。
 
 项目根目录中已有的旧 `UpList/` 不会自动迁移，后续数据以用户选择的知识库目录为准。
