@@ -146,3 +146,7 @@ Windows 生成 EXE 目录（必须在 Windows 原生环境执行）：
 - OpenCLI、Node.js、Chrome 扩展、yt-dlp 和 B 站浏览器登录尚未由安装包自动处理。
 - macOS 包尚未签名、公证。Windows EXE 已在 Windows 11 原生环境完成 PyInstaller 构建与启动冒烟验证；代码签名与 SmartScreen 白名单仍待处理。
 - 第三个页签的单视频下载统一写入 `OtherVideos/`，不会加入 UP 自动追踪列表。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)，版权持有人为 `-kb-`。
