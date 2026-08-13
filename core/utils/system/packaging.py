@@ -2,6 +2,8 @@ import platform
 import subprocess
 import sys
 
+from core.version import APP_VERSION
+
 
 def build_package(target: str) -> None:
     host = platform.system().lower()
@@ -11,14 +13,15 @@ def build_package(target: str) -> None:
         raise RuntimeError("Windows EXE 必须在 Windows 上构建")
 
     separator = ";" if target == "windows" else ":"
+    package_name = f"BiliUp-{APP_VERSION}"
     command = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
         "--runtime-hook", "scripts/pyi_rth_stdout.py",
-        "--name", "BiliUp", "--add-data", f"app/static{separator}app/static", "app/main.py",
+        "--name", package_name, "--add-data", f"app/static{separator}app/static", "app/main.py",
     ]
     subprocess.run(command, check=True)
     if target == "macos":
         subprocess.run([
-            "hdiutil", "create", "-volname", "BiliUp", "-srcfolder", "dist/BiliUp.app",
-            "-ov", "-format", "UDZO", "dist/BiliUp.dmg",
+            "hdiutil", "create", "-volname", package_name, "-srcfolder", f"dist/{package_name}.app",
+            "-ov", "-format", "UDZO", f"dist/{package_name}.dmg",
         ], check=True)

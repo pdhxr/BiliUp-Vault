@@ -1,5 +1,7 @@
 # BiliUp 架构
 
+适用应用版本：`0.1.0`。
+
 ## 当前状态
 
 当前 MVP 已实现首次知识库目录设置、OpenCLI 搜索、UP 单选登记、UP 视频列表刷新、选中视频下载、单视频下载和可选字幕 sidecar 接口；范围见 [PRD.md](PRD.md)。
@@ -39,6 +41,7 @@
 - `core/repositories/videos.py`：读写 `<knowledge_base_root>/UpList/<UP名称>.jsonl` 远端追踪清单。
 - `core/repositories/library.py`：读写 `<knowledge_base_root>/SortedMp4/<UP名称>/videos.jsonl` 和 `<knowledge_base_root>/OtherVideos/videos.jsonl` 本地视频库索引；持久化格式与参考项目一致。
 - `core/utils/system/`：唯一的 macOS/Windows 平台适配边界，提供统一的浏览器、子进程、目录选择、目录打开、应用配置目录和 PyInstaller 资源路径接口。
+- `core/version.py`：应用版本的唯一来源；FastAPI 元数据和安装包名称从此读取。
 - `scripts/build.py`：构建工具；在对应原生系统调用 PyInstaller，macOS 额外生成 DMG。
 
 ## 数据流

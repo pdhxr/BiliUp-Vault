@@ -5,6 +5,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.main import create_app, main
+from core.version import APP_VERSION
 
 
 class RouteTests(unittest.TestCase):
@@ -21,6 +22,11 @@ class RouteTests(unittest.TestCase):
         prepare_port.assert_called_once_with(8765)
         browser.assert_called_once_with("http://127.0.0.1:8765")
         self.assertEqual(run.call_args.kwargs["port"], 8765)
+
+    def test_openapi_reports_application_version(self) -> None:
+        response = self.client.get("/openapi.json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["info"]["version"], APP_VERSION)
 
     @patch("app.routes.up.search_up", return_value=[{"uid": "1", "nickname": "UP", "bio": "简介"}])
     def test_search_route(self, _search) -> None:

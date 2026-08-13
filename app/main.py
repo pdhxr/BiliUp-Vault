@@ -9,13 +9,14 @@ from app.routes.videos import router as videos_router
 from core.utils.system.browser import open_browser_after_start
 from core.utils.system.network import BILIUP_PORT, prepare_biliup_port, stop_existing_biliup_services
 from core.utils.system.resources import resource_path
+from core.version import APP_VERSION
 
 
 STATIC_DIR = resource_path("app/static")
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="BiliUp")
+    app = FastAPI(title="BiliUp", version=APP_VERSION)
     app.include_router(router)
     app.include_router(setup_router)
     app.include_router(videos_router)

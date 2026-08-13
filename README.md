@@ -2,6 +2,8 @@
 
 BiliUp 是一个跨 macOS 和 Windows 运行的本地 B 站视频知识库工具。首次运行时，用户选择自己的知识库目录；应用通过 OpenCLI 复用已登录的 Chrome 会话访问 B 站，不保存 B 站密码或 Cookie。
 
+当前 MVP 版本：`0.1.0`。版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 功能概览
 
 当前页面包含三个功能页签：
@@ -61,10 +63,10 @@ yt-dlp --version
 ### Windows
 
 1. 解压完整的 `BiliUp` 目录，不要只复制 EXE 文件。
-2. 双击 `BiliUp.exe`；如遇 SmartScreen 提示，确认来源后选择继续运行。
+2. 双击 `BiliUp-0.1.0.exe`；如遇 SmartScreen 提示，确认来源后选择继续运行。
 3. 首次进入 WebUI 时，选择一个已存在且可写的视频知识库目录。
 
-Windows 安装包必须在 Windows 原生环境构建；构建脚本已在 Windows 11 / Python 3.13 上验证通过，PyInstaller 产物 `dist/BiliUp/BiliUp.exe` 可正常启动 WebUI、读写本地知识库。`--windowed` 模式下 uvicorn 的 stdout 崩溃已通过 `scripts/pyi_rth_stdout.py` runtime hook 修复。
+Windows 安装包必须在 Windows 原生环境构建；构建脚本已在 Windows 11 / Python 3.13 上验证通过，PyInstaller 产物 `dist/BiliUp-0.1.0/BiliUp-0.1.0.exe` 可正常启动 WebUI、读写本地知识库。`--windowed` 模式下 uvicorn 的 stdout 崩溃已通过 `scripts/pyi_rth_stdout.py` runtime hook 修复。
 
 ## 数据和配置
 
@@ -137,7 +139,7 @@ Windows 生成 EXE 目录（必须在 Windows 原生环境执行）：
 .\.venv\Scripts\python.exe -m scripts.build windows
 ```
 
-构建产物位于 `dist/`，不提交 Git。修复或开发完成后先运行源码测试并手动验收，版本确认后再打包。
+构建产物位于 `dist/`，不提交 Git。安装包名称包含版本号，例如 macOS 的 `BiliUp-0.1.0.dmg` 和 Windows 的 `BiliUp-0.1.0/`。修复或开发完成后先运行源码测试并手动验收，版本确认后再打包。
 
 ## 当前限制
 
