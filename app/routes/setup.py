@@ -2,7 +2,14 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from core.configuration import KnowledgeBaseConfigurationError, knowledge_base_root
-from core.setup import batch_track_settings, choose_and_configure_library, save_batch_track_settings, setup_status
+from core.setup import (
+    batch_track_settings,
+    choose_and_configure_library,
+    desktop_settings,
+    save_batch_track_settings,
+    save_desktop_settings,
+    setup_status,
+)
 from core.utils.system.directories import DirectoryPickerError, open_directory
 
 
@@ -11,6 +18,10 @@ router = APIRouter(prefix="/api")
 
 class BatchTrackSettingsRequest(BaseModel):
     since_date: str = Field(default="", max_length=10)
+
+
+class DesktopSettingsRequest(BaseModel):
+    desktop_port: object
 
 
 @router.get("/setup-status")
@@ -71,3 +82,19 @@ def update_batch_track_settings(request: BatchTrackSettingsRequest) -> dict[str,
         return save_batch_track_settings(request.since_date)
     except KnowledgeBaseConfigurationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/settings/desktop")
+def get_desktop_settings() -> dict[str, object]:
+    try:
+        return desktop_settings()
+    except KnowledgeBaseConfigurationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.put("/settings/desktop")
+def update_desktop_settings(request: DesktopSettingsRequest) -> dict[str, object]:
+    try:
+        return save_desktop_settings(request.desktop_port)
+    except KnowledgeBaseConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

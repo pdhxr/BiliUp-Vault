@@ -1,7 +1,8 @@
 from datetime import datetime
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 
 from core.configuration import knowledge_base_root
+from core.opencli_videos import OpenCliCancelledError
 from core.repositories.followings import find, set_next_sync_page
 from core.video_errors import FollowingNotFoundError
 from core.video_sync import refresh_up_videos_with_stats
@@ -17,24 +18,27 @@ _state: dict[str, object] = {
     "max_pages": 0,
     "added_total": 0,
     "errors": 0,
+    "cancel_requested": False,
+    "cancelled": False,
     "started_at": "",
     "finished_at": "",
     "results": [],
 }
 _state_lock = Lock()
+_cancel_event = Event()
 
 
 def _now() -> str:
     return datetime.now().astimezone().isoformat()
 
 
-def _copy_state() -> dict[str, object]:
+def _copy_state_unlocked() -> dict[str, object]:
     return {key: (list(value) if key == "results" else value) for key, value in _state.items()}
 
 
 def _snapshot() -> dict[str, object]:
     with _state_lock:
-        return _copy_state()
+        return _copy_state_unlocked()
 
 
 def _set(**values: object) -> None:
@@ -55,7 +59,7 @@ def start_batch_sync(
         raise ValueError("至少选择一个 UP 主")
     with _state_lock:
         if _state["running"]:
-            return {"status": "busy", "current": _copy_state()}
+            return {"status": "busy", "current": _copy_state_unlocked()}
 
     root = knowledge_base_root()
     queue: list[dict[str, str]] = []
@@ -74,7 +78,8 @@ def start_batch_sync(
 
     with _state_lock:
         if _state["running"]:
-            return {"status": "busy", "current": _copy_state()}
+            return {"status": "busy", "current": _copy_state_unlocked()}
+        _cancel_event.clear()
         _state.update({
             "running": True,
             "total": len(queue),
@@ -85,6 +90,8 @@ def start_batch_sync(
             "max_pages": max_pages,
             "added_total": 0,
             "errors": 0,
+            "cancel_requested": False,
+            "cancelled": False,
             "started_at": _now(),
             "finished_at": "",
             "results": [],
@@ -107,10 +114,13 @@ def _run_batch(
 ) -> None:
     try:
         for item in queue:
+            if _cancel_event.is_set():
+                break
             uid = item["up_id"]
             nickname = item["nickname"]
             page = int(item["page"])
             _set(current_up=nickname, current_up_id=uid, current_page=0)
+            completed = False
             try:
                 page_size = 0
 
@@ -126,6 +136,7 @@ def _run_batch(
                     max_new_videos=max_new_videos,
                     on_page=lambda current_page: _set(current_page=current_page),
                     on_page_result=record_page,
+                    cancel_event=_cancel_event,
                 )
                 if continue_history:
                     set_next_sync_page(
@@ -144,6 +155,17 @@ def _run_batch(
                     })
                     _state["results"] = results
                     _state["added_total"] = int(_state["added_total"]) + added
+                completed = True
+            except OpenCliCancelledError:
+                with _state_lock:
+                    results = list(_state["results"])
+                    results.append({
+                        "up_id": uid,
+                        "nickname": nickname,
+                        "status": "cancelled",
+                    })
+                    _state["results"] = results
+                break
             except Exception as exc:
                 with _state_lock:
                     results = list(_state["results"])
@@ -155,12 +177,31 @@ def _run_batch(
                     })
                     _state["results"] = results
                     _state["errors"] = int(_state["errors"]) + 1
+                completed = True
             finally:
-                with _state_lock:
-                    _state["done"] = int(_state["done"]) + 1
+                if completed:
+                    with _state_lock:
+                        _state["done"] = int(_state["done"]) + 1
     finally:
-        _set(running=False, current_up="", current_up_id="", current_page=0, finished_at=_now())
+        _set(
+            running=False,
+            current_up="",
+            current_up_id="",
+            current_page=0,
+            cancel_requested=False,
+            cancelled=_cancel_event.is_set(),
+            finished_at=_now(),
+        )
 
 
 def batch_sync_progress() -> dict[str, object]:
     return _snapshot()
+
+
+def request_batch_sync_cancel() -> dict[str, object]:
+    with _state_lock:
+        if not _state["running"]:
+            return {"status": "idle", "current": _copy_state_unlocked()}
+        _cancel_event.set()
+        _state["cancel_requested"] = True
+        return {"status": "stopping", "current": _copy_state_unlocked()}

@@ -2,6 +2,37 @@
 
 本项目使用[语义化版本](https://semver.org/lang/zh-CN/)；每个正式版本对应一个 Git 标签（例如 `v0.1.0`）。
 
+## [未发布]
+
+暂无。
+
+## [0.2.0] - 2026-08-18
+
+### 新增
+
+- Tauri v2 桌面外壳，复用现有 FastAPI UI、路由和 `core` 业务内核。
+- 桌面单实例、后端健康识别、端口冲突保护和受管 sidecar 退出回收。
+- Web 与桌面应用共用现有 `config.json`、知识库路径和业务数据；新增可在界面设置的 `desktop_port`。
+- 端口设置区域显示实际 `config.json` 完整路径。
+- UP 批量同步和“批量追踪并下载”增加停止操作；只取消对应批次并保留已经完成的数据。
+- 采用用户选定的简洁 B 图标，统一 Finder、DMG 和 Dock 图标。
+- macOS DMG 与 Windows Tauri 安装器的原生构建流程，以及桌面安全边界和验收文档。
+
+### 安全
+
+- 桌面修改类 API 要求公开客户端标记，并限制可信本机 Host；localhost 页面不获得 shell 或文件系统能力。
+
+### 修复
+
+- UP 主管理页不再依赖桌面 WebView 无法稳定显示的浏览器原生确认框；删除操作改用应用内确认对话框。
+- 退出时协调关闭后台任务和受管子进程；下次启动可识别并安全回收身份明确的旧 BiliUp 后端，不终止未知程序。
+- HEVC `hev1` 视频在下载后无损重封装为 QuickTime 兼容的 `hvc1`。
+
+### 验证状态
+
+- macOS Apple Silicon 的自动测试、Rust 测试、sidecar 冒烟和 Tauri release 构建已通过。
+- Windows 原生构建、安装和退出回收仍待验证；`v0.2.0` 仅发布 macOS Apple Silicon 安装包。
+
 ## [0.1.0] - 2026-08-12
 
 ### 新增

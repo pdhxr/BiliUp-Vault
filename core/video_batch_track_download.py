@@ -5,11 +5,12 @@
 """
 
 from datetime import datetime
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 import time
 
 from core.configuration import batch_track_since_date, knowledge_base_root
 from core.download_progress import get_progress
+from core.opencli_videos import OpenCliCancelledError
 from core.repositories.followings import find
 from core.video_download import queue_downloads
 from core.video_errors import FollowingNotFoundError
@@ -30,6 +31,7 @@ _state: dict[str, object] = {
     "download_total": 0,
     "download_done": 0,
     "download_failed": 0,
+    "download_cancelled": 0,
     "subtitle_queued": 0,
     "cover_total": 0,
     "cover_done": 0,
@@ -38,10 +40,12 @@ _state: dict[str, object] = {
     "errors": 0,
     "started_at": "",
     "finished_at": "",
+    "cancel_requested": False,
+    "cancelled": False,
     "results": [],
 }
 _state_lock = Lock()
-_cancel_requested = False
+_cancel_event = Event()
 _DOWNLOAD_WAIT_SECONDS = 7200
 
 
@@ -135,6 +139,7 @@ def start_batch_track_download(up_ids: list[str], since_date: str = "") -> dict[
             "download_total": 0,
             "download_done": 0,
             "download_failed": 0,
+            "download_cancelled": 0,
             "subtitle_queued": 0,
             "cover_total": 0,
             "cover_done": 0,
@@ -143,16 +148,16 @@ def start_batch_track_download(up_ids: list[str], since_date: str = "") -> dict[
             "errors": 0,
             "started_at": _now(),
             "finished_at": "",
+            "cancel_requested": False,
+            "cancelled": False,
             "results": [],
         })
-    global _cancel_requested
-    _cancel_requested = False
+        _cancel_event.clear()
     Thread(target=_run, args=(queue, cutoff), name="biliup-track-download", daemon=True).start()
     return {"status": "started", "total": len(queue), "since_date": cutoff}
 
 
 def _run(queue: list[dict[str, str]], since_date: str) -> None:
-    global _cancel_requested
     results: list[dict[str, object]] = []
     try:
         for item in queue:
@@ -172,15 +177,14 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
                 "status": "ok",
             }
             _set(current_up=nickname, current_up_id=uid)
-            if _cancel_requested:
-                result["status"] = "cancelled"
-                results.append(result)
-                with _state_lock:
-                    _state["results"] = list(results)
-                    _state["done"] = int(_state["done"]) + 1
-                continue
+            if _cancel_event.is_set():
+                break
             try:
-                details = refresh_up_videos_with_details(uid, since_date=since_date)
+                details = refresh_up_videos_with_details(
+                    uid,
+                    since_date=since_date,
+                    cancel_event=_cancel_event,
+                )
                 new_videos = [
                     {
                         "bvid": str(video.get("bvid", "")).strip(),
@@ -195,6 +199,11 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
                 result["pending_videos"] = _pending_download_videos(details.get("rows"), since_date)
                 with _state_lock:
                     _state["added_total"] = int(_state["added_total"]) + len(new_videos)
+            except OpenCliCancelledError:
+                result["status"] = "cancelled"
+                results.append(result)
+                _set(results=list(results))
+                break
             except Exception as exc:
                 _append_error(result, str(exc))
             results.append(result)
@@ -203,6 +212,8 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
                 _state["done"] = int(_state["done"]) + 1
 
         for result in results:
+            if _cancel_event.is_set():
+                break
             if result.get("status") != "ok":
                 continue
             try:
@@ -220,6 +231,8 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
         download_tasks: list[tuple[str, str]] = []
         _set(phase="downloading", current_up="", current_up_id="")
         for result in results:
+            if _cancel_event.is_set():
+                break
             if result.get("status") != "ok":
                 continue
             videos = result.get("pending_videos", [])
@@ -228,7 +241,7 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
                 continue
             uid = str(result["up_id"])
             try:
-                jobs = queue_downloads(uid, bvids)
+                jobs = queue_downloads(uid, bvids, cancel_event=_cancel_event)
                 result["download_jobs"] = jobs
                 download_tasks.extend((str(job.get("bvid", "")), uid) for job in jobs if job.get("bvid"))
             except Exception as exc:
@@ -246,6 +259,8 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
             statuses = [get_progress(str(job.get("bvid", ""))).get("status") for job in jobs]
             if any(status == "failed" for status in statuses):
                 result["status"] = "error"
+            elif any(status == "cancelled" for status in statuses):
+                result["status"] = "cancelled"
             elif statuses and all(status == "success" for status in statuses):
                 result["status"] = "ok"
         _set(results=list(results))
@@ -253,6 +268,8 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
         root = knowledge_base_root()
         _set(phase="covering", current_up="", current_up_id="")
         for result in results:
+            if _cancel_event.is_set():
+                break
             if result.get("status") not in {"ok", "error"}:
                 continue
             uid = str(result["up_id"])
@@ -277,6 +294,7 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
                     since_date,
                     root=root,
                     on_progress=update_cover_progress,
+                    cancel_event=_cancel_event,
                 )
                 result.update({
                     "cover_total": cover_result["total"],
@@ -289,7 +307,15 @@ def _run(queue: list[dict[str, str]], since_date: str) -> None:
                     _state["cover_failed"] = int(_state["cover_failed"]) + 1
             _set(results=list(results))
     finally:
-        _set(running=False, phase="completed", current_up="", current_up_id="", finished_at=_now())
+        cancelled = _cancel_event.is_set()
+        _set(
+            running=False,
+            phase="cancelled" if cancelled else "completed",
+            cancelled=cancelled,
+            current_up="",
+            current_up_id="",
+            finished_at=_now(),
+        )
 
 
 def _wait_for_downloads(bvids: list[str]) -> None:
@@ -298,12 +324,18 @@ def _wait_for_downloads(bvids: list[str]) -> None:
         _set(download_done=0, download_failed=0)
         return
     deadline = time.monotonic() + _DOWNLOAD_WAIT_SECONDS
+    cancellation_deadline: float | None = None
     while time.monotonic() < deadline:
+        if _cancel_event.is_set() and cancellation_deadline is None:
+            cancellation_deadline = time.monotonic() + 5
         statuses = [get_progress(bvid).get("status") for bvid in unique_bvids]
         done = sum(status == "success" for status in statuses)
         failed = sum(status == "failed" for status in statuses)
-        _set(download_done=done, download_failed=failed)
-        if done + failed == len(unique_bvids):
+        cancelled = sum(status == "cancelled" for status in statuses)
+        _set(download_done=done, download_failed=failed, download_cancelled=cancelled)
+        if done + failed + cancelled == len(unique_bvids):
+            return
+        if cancellation_deadline is not None and time.monotonic() >= cancellation_deadline:
             return
         time.sleep(0.5)
     statuses = [get_progress(bvid).get("status") for bvid in unique_bvids]
@@ -315,3 +347,13 @@ def _wait_for_downloads(bvids: list[str]) -> None:
 
 def batch_track_download_progress() -> dict[str, object]:
     return _copy_state()
+
+
+def request_batch_track_cancel() -> dict[str, object]:
+    with _state_lock:
+        if not _state["running"]:
+            return {"status": "idle", "current": _copy_state_unlocked()}
+        _state["cancel_requested"] = True
+        current = _copy_state_unlocked()
+    _cancel_event.set()
+    return {"status": "stopping", "current": current}

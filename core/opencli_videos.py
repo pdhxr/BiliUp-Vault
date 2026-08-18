@@ -1,11 +1,16 @@
 import json
 import re
 import subprocess
+from threading import Event
 
-from core.utils.system.process import run_opencli
+from core.utils.system.process import ProcessCancelledError, run_opencli
 
 
 class OpenCliVideoError(RuntimeError):
+    pass
+
+
+class OpenCliCancelledError(OpenCliVideoError):
     pass
 
 
@@ -132,7 +137,13 @@ def _video_metadata_failure(output: str) -> str:
     return "视频信息获取失败，请确认 OpenCLI 已连接到 B 站"
 
 
-def fetch_user_videos(uid: str, *, page: int = 1, limit: int = 50) -> list[dict]:
+def fetch_user_videos(
+    uid: str,
+    *,
+    page: int = 1,
+    limit: int = 50,
+    cancel_event: Event | None = None,
+) -> list[dict]:
     try:
         result = run_opencli(
             [
@@ -140,7 +151,10 @@ def fetch_user_videos(uid: str, *, page: int = 1, limit: int = 50) -> list[dict]
                 "--limit", str(limit), "--page", str(page), "--window", "background",
             ],
             timeout=120,
+            cancel_event=cancel_event,
         )
+    except ProcessCancelledError as exc:
+        raise OpenCliCancelledError("视频同步已停止") from exc
     except FileNotFoundError as exc:
         raise OpenCliVideoError("未找到 OpenCLI，请先安装并配置 OpenCLI") from exc
     except subprocess.TimeoutExpired as exc:
@@ -186,11 +200,23 @@ def fetch_video_metadata(video_ref: str) -> dict[str, str]:
     return _video_metadata((result.stdout or "") + "\n" + (result.stderr or ""))
 
 
-def download_video(bvid: str, output_directory: str, *, quality: str = "best") -> str:
-    return _download_video_with_quality(bvid, output_directory, quality)
+def download_video(
+    bvid: str,
+    output_directory: str,
+    *,
+    quality: str = "best",
+    cancel_event: Event | None = None,
+) -> str:
+    return _download_video_with_quality(bvid, output_directory, quality, cancel_event=cancel_event)
 
 
-def _download_video_with_quality(bvid: str, output_directory: str, quality: str) -> str:
+def _download_video_with_quality(
+    bvid: str,
+    output_directory: str,
+    quality: str,
+    *,
+    cancel_event: Event | None = None,
+) -> str:
     try:
         result = run_opencli(
             [
@@ -198,11 +224,14 @@ def _download_video_with_quality(bvid: str, output_directory: str, quality: str)
                 "--quality", quality, "--window", "background",
             ],
             timeout=3600,
+            cancel_event=cancel_event,
         )
     except FileNotFoundError as exc:
         raise OpenCliVideoError("未找到 OpenCLI，请先安装并配置 OpenCLI") from exc
     except subprocess.TimeoutExpired as exc:
         raise OpenCliVideoError("视频下载超时，请重试") from exc
+    except ProcessCancelledError as exc:
+        raise OpenCliCancelledError("视频下载已停止") from exc
     output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
     if result.returncode != 0 or _download_output_failed(output):
         detail = _download_error_detail(output, result.returncode)

@@ -11,6 +11,11 @@ class KnowledgeBaseConfigurationError(RuntimeError):
     pass
 
 
+DEFAULT_DESKTOP_PORT = 8765
+MIN_DESKTOP_PORT = 1024
+MAX_DESKTOP_PORT = 65535
+
+
 def _normalize_batch_track_since_date(value: object) -> str:
     """把配置中的追踪起始日期统一保存为 HTML date 可读取的格式。"""
     text = str(value or "").strip()
@@ -26,6 +31,30 @@ def _normalize_batch_track_since_date(value: object) -> str:
 
 def configuration_file() -> Path:
     return application_config_directory() / "config.json"
+
+
+def _read_configuration(target: Path, *, require_library: bool = False) -> dict[str, object]:
+    if not target.is_file():
+        if require_library:
+            raise KnowledgeBaseConfigurationError("请先选择视频知识库目录")
+        return {}
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise KnowledgeBaseConfigurationError("视频知识库配置无效，请重新选择目录") from exc
+    if not isinstance(data, dict):
+        raise KnowledgeBaseConfigurationError("视频知识库配置无效，请重新选择目录")
+    if require_library and not data.get("knowledge_base_root"):
+        raise KnowledgeBaseConfigurationError("视频知识库配置无效，请重新选择目录")
+    return data
+
+
+def _normalize_desktop_port(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise KnowledgeBaseConfigurationError("桌面端口必须是整数")
+    if not MIN_DESKTOP_PORT <= value <= MAX_DESKTOP_PORT:
+        raise KnowledgeBaseConfigurationError(f"桌面端口必须在 {MIN_DESKTOP_PORT}–{MAX_DESKTOP_PORT} 之间")
+    return value
 
 
 def _write_atomically(path: Path, content: str) -> None:
@@ -54,29 +83,28 @@ def configure_knowledge_base(directory: Path, config_file: Path | None = None) -
     root = directory.expanduser().resolve()
     _ensure_writable(root)
     target = config_file or configuration_file()
-    settings = {"version": 1, "knowledge_base_root": str(root), "batch_track_since_date": ""}
+    settings: dict[str, object] = {"version": 1, "batch_track_since_date": ""}
     if target.is_file():
         try:
-            previous = json.loads(target.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            previous = {}
-        if isinstance(previous, dict):
-            try:
-                settings["batch_track_since_date"] = _normalize_batch_track_since_date(previous.get("batch_track_since_date"))
-            except KnowledgeBaseConfigurationError:
-                settings["batch_track_since_date"] = ""
+            settings.update(_read_configuration(target))
+        except KnowledgeBaseConfigurationError:
+            pass
+        try:
+            settings["batch_track_since_date"] = _normalize_batch_track_since_date(settings.get("batch_track_since_date"))
+        except KnowledgeBaseConfigurationError:
+            settings["batch_track_since_date"] = ""
+    settings["version"] = 1
+    settings["knowledge_base_root"] = str(root)
     _write_atomically(target, json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
     return root
 
 
 def knowledge_base_root(config_file: Path | None = None) -> Path:
     target = config_file or configuration_file()
-    if not target.is_file():
-        raise KnowledgeBaseConfigurationError("请先选择视频知识库目录")
     try:
-        data = json.loads(target.read_text(encoding="utf-8"))
+        data = _read_configuration(target, require_library=True)
         root = Path(str(data["knowledge_base_root"]))
-    except (json.JSONDecodeError, KeyError, TypeError, OSError) as exc:
+    except (KeyError, TypeError) as exc:
         raise KnowledgeBaseConfigurationError("视频知识库配置无效，请重新选择目录") from exc
     _ensure_writable(root)
     return root
@@ -85,16 +113,12 @@ def knowledge_base_root(config_file: Path | None = None) -> Path:
 def batch_track_since_date(config_file: Path | None = None) -> str:
     """读取批量追踪起始日期；未设置时返回空字符串。"""
     target = config_file or configuration_file()
-    if not target.is_file():
-        raise KnowledgeBaseConfigurationError("请先选择视频知识库目录")
     try:
-        data = json.loads(target.read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or "knowledge_base_root" not in data:
-            raise ValueError("配置缺少视频知识库目录")
+        data = _read_configuration(target, require_library=True)
         return _normalize_batch_track_since_date(data.get("batch_track_since_date"))
     except KnowledgeBaseConfigurationError:
         raise
-    except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+    except (TypeError, ValueError) as exc:
         raise KnowledgeBaseConfigurationError("视频知识库配置无效，请重新选择目录") from exc
 
 
@@ -102,14 +126,24 @@ def set_batch_track_since_date(value: object, config_file: Path | None = None) -
     """保存批量追踪起始日期，同时保留配置中的其他字段。"""
     target = config_file or configuration_file()
     normalized = _normalize_batch_track_since_date(value)
-    if not target.is_file():
-        raise KnowledgeBaseConfigurationError("请先选择视频知识库目录")
-    try:
-        data = json.loads(target.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        raise KnowledgeBaseConfigurationError("视频知识库配置无效，请重新选择目录") from exc
-    if not isinstance(data, dict) or not data.get("knowledge_base_root"):
-        raise KnowledgeBaseConfigurationError("视频知识库配置无效，请重新选择目录")
+    data = _read_configuration(target, require_library=True)
     data["batch_track_since_date"] = normalized
+    _write_atomically(target, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    return normalized
+
+
+def desktop_port(config_file: Path | None = None) -> int:
+    target = config_file or configuration_file()
+    data = _read_configuration(target)
+    if "desktop_port" not in data:
+        return DEFAULT_DESKTOP_PORT
+    return _normalize_desktop_port(data["desktop_port"])
+
+
+def set_desktop_port(value: object, config_file: Path | None = None) -> int:
+    target = config_file or configuration_file()
+    normalized = _normalize_desktop_port(value)
+    data = _read_configuration(target, require_library=True)
+    data["desktop_port"] = normalized
     _write_atomically(target, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
     return normalized

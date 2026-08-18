@@ -186,3 +186,7 @@ def queue_single_video_download(video_ref: str) -> dict[str, object]:
     )
     _executor.submit(_run_job, metadata)
     return job
+
+
+def shutdown_single_downloads() -> None:
+    _executor.shutdown(wait=False, cancel_futures=True)

@@ -38,6 +38,7 @@
       downloading: '下载中',
       success: '完成',
       failed: '失败',
+      cancelled: '已停止',
     }[status] || status || '未知';
   }
 
@@ -45,21 +46,23 @@
     const active = rows.filter((row) => row.status === 'queued' || row.status === 'downloading').length;
     const failed = rows.filter((row) => row.status === 'failed').length;
     const done = rows.filter((row) => row.status === 'success').length;
+    const cancelled = rows.filter((row) => row.status === 'cancelled').length;
     const queued = rows.filter((row) => row.status === 'queued').length;
     const downloading = rows.filter((row) => row.status === 'downloading').length;
     const parts = [];
     if (downloading) parts.push(`${downloading} 下载中`);
     if (queued) parts.push(`${queued} 排队中`);
     if (failed) parts.push(`${failed} 失败`);
+    if (cancelled) parts.push(`${cancelled} 已停止`);
     if (done) parts.push(`${done} 完成`);
     statusText.textContent = parts.join(' · ');
 
-    const order = { downloading: 0, queued: 1, failed: 2, success: 3 };
+    const order = { downloading: 0, queued: 1, failed: 2, cancelled: 3, success: 4 };
     const sorted = [...rows].sort((left, right) => (order[left.status] ?? 9) - (order[right.status] ?? 9));
     list.innerHTML = sorted.map((row) => {
       const state = String(row.status || '');
-      const className = state === 'success' ? 'done' : state === 'failed' ? 'failed' : 'active';
-      const icon = state === 'success' ? '✓' : state === 'failed' ? '✗' : '⏳';
+      const className = state === 'success' ? 'done' : ['failed', 'cancelled'].includes(state) ? 'failed' : 'active';
+      const icon = state === 'success' ? '✓' : state === 'cancelled' ? '■' : state === 'failed' ? '✗' : '⏳';
       const title = String(row.title || row.bvid || '视频').slice(0, 60);
       const error = state === 'failed' && row.error ? `：${row.error}` : '';
       const size = state === 'downloading' ? formatSize(row.size_bytes) : '';
@@ -78,7 +81,7 @@
 
   async function poll() {
     try {
-      const response = await fetch('/api/videos/download-progress');
+      const response = await window.apiFetch('/api/videos/download-progress');
       const rows = await responseData(response);
       if (!response.ok) throw new Error(rows.detail || '无法读取下载进度');
       const normalized = Array.isArray(rows) ? rows : [];

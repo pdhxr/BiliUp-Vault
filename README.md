@@ -2,18 +2,24 @@
 
 BiliUp 是一个跨 macOS 和 Windows 运行的本地 B 站视频知识库工具。首次运行时，用户选择自己的知识库目录；应用通过 OpenCLI 复用已登录的 Chrome 会话访问 B 站，不保存 B 站密码或 Cookie。
 
-当前 MVP 版本：`0.1.0`。版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：`0.2.0`。安装包请从 [GitHub Releases](https://github.com/pdhxr/BiliUp-Vault/releases) 下载，版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 功能概览
 
 当前页面包含三个功能页签：
 
-- **UP 主管理**：搜索并登记 UP 主，查看 UP 信息和视频统计，刷新视频列表，设置自动追踪下载，批量同步或删除登记。
-- **UP 主视频下载**：查看 UP 的视频清单，下载单个或多个视频，按起始日期批量追踪并下载未下载视频，同时补齐追踪范围内本地视频缺少的封面；默认优先选择可下载的低分辨率档位以节省空间。
-- **其他功能**：查看/重新选择视频知识库目录，打开知识库或单视频目录，并通过 B 站链接、短链接或 BV 号下载未纳入 UP 追踪的单个视频。
+- **UP 主管理**：搜索并登记 UP 主，查看 UP 信息和视频统计，刷新视频列表，设置自动追踪下载，批量同步或删除登记；批量同步过程中可立即停止并重新选择。
+- **UP 主视频下载**：查看 UP 的视频清单，下载单个或多个视频，按起始日期批量追踪并下载未下载视频，同时补齐追踪范围内本地视频缺少的封面；批量追踪或下载过程中可停止本批次，不影响手动下载。
+- **其他功能**：查看/重新选择视频知识库目录，打开知识库或单视频目录，通过链接或 BV 号下载单个视频，并配置桌面服务端口、查看实际配置文件路径。
 - **本地媒体索引**：UP 视频列表中选择下载与“其他功能”的单视频下载，都会在视频落盘后尝试获取官方字幕和封面图片；附加资源获取失败不影响视频下载。
 
 详细需求和业务规则见 [PRD.md](PRD.md)，架构和模块边界见 [ARCHITECTURE.md](ARCHITECTURE.md)。源码验证命令见 [VerifyGuide.md](VerifyGuide.md)。
+
+## 桌面应用架构
+
+桌面安装包采用 Tauri v2 外壳，保留现有 FastAPI 页面和三层业务架构，由 Tauri 负责窗口、单实例和 Python sidecar 生命周期。
+
+Web 与桌面模式共用现有用户 `config.json`，其中包含 `desktop_port`；`UpList`、`SortedMp4` 和 `OtherVideos` 继续位于用户选择的知识库，不做数据迁移。桌面开发与发布检查见 [DESKTOP.md](DESKTOP.md)，安全边界见 [SECURITY.md](SECURITY.md)。
 
 ## 运行前置条件
 
@@ -50,13 +56,13 @@ ffmpeg -version
 
 当前源码已使用 OpenCLI `1.8.6` 验证。版本低于 `1.8.6` 时先执行上面的升级命令；OpenCLI 的 Daemon、Extension 和 Connectivity 检查正常后，BiliUp 才能搜索、刷新和下载。BiliUp 会自动查找常见安装位置，并以后台窗口方式调用 OpenCLI。
 
-应用固定使用 `http://127.0.0.1:8765/`。再次启动时，应用会检查本机的监听服务；只有能确认身份为旧 BiliUp 的服务才会被停止，再由新实例接管固定端口。若 `8765` 属于其他程序，应用不会自动终止它。
+桌面应用默认使用 `http://127.0.0.1:8765/`，可在“其他功能”中设置下次启动端口并查看 `config.json` 的完整路径。第二次启动只聚焦已有窗口；若端口由身份可确认的旧 BiliUp 后端占用，应用会先请求其正常退出，必要时只回收该旧进程。未知程序占用时不自动换端口、不连接也不终止。普通 Web 源码模式仍使用固定端口。
 
 ## 使用安装包
 
 ### macOS
 
-1. 打开 `BiliUp.dmg`，将 `BiliUp.app` 拖入“应用程序”。
+1. 从 GitHub Releases 下载 `BiliUp_<版本>_aarch64.dmg`，打开后将 `BiliUp.app` 拖入“应用程序”。
 2. 启动应用；如遇未签名提示，使用“右键 → 打开”。
 3. 首次进入 WebUI 时，选择一个已存在且可写的视频知识库目录。
 
@@ -64,11 +70,11 @@ ffmpeg -version
 
 ### Windows
 
-1. 解压完整的 `BiliUp` 目录，不要只复制 EXE 文件。
-2. 双击 `BiliUp-0.1.0.exe`；如遇 SmartScreen 提示，确认来源后选择继续运行。
+1. 运行 Tauri 生成的 Windows 安装器。
+2. 启动 BiliUp；如遇 SmartScreen 提示，确认来源后选择继续运行。
 3. 首次进入 WebUI 时，选择一个已存在且可写的视频知识库目录。
 
-Windows 安装包必须在 Windows 原生环境构建；构建脚本已在 Windows 11 / Python 3.13 上验证通过，PyInstaller 产物 `dist/BiliUp-0.1.0/BiliUp-0.1.0.exe` 可正常启动 WebUI、读写本地知识库。`--windowed` 模式下 uvicorn 的 stdout 崩溃已通过 `scripts/pyi_rth_stdout.py` runtime hook 修复。
+Windows 安装包必须在 Windows 原生环境重新构建 sidecar 和 Tauri 安装器。当前 Tauri 封装已在 macOS Apple Silicon 完成构建与启动验证，Windows Tauri 安装包仍需原生平台验证。
 
 ## 数据和配置
 
@@ -87,7 +93,7 @@ Windows 安装包必须在 Windows 原生环境构建；构建脚本已在 Windo
 - `followings.json` 保存 UP 登记和管理状态。
 - `UpList/<UP名称>.jsonl` 保存 B 站视频追踪信息；`SortedMp4/<UP名称>/videos.jsonl` 保存本地视频索引，两者独立维护。
 - `transcript` 与 `cover` 字段分别记录视频旁 `__transcript.md` 字幕脚本和 `<视频主名>_cover.<扩展名>` 封面状态；封面按实际图片格式保存为 JPG 或 WEBP。UP 视频下载和单视频下载共用字幕、封面获取逻辑；附加资源获取失败时对应字段保持为 `false`，不影响视频下载。
-- 应用配置保存在 macOS `~/Library/Application Support/BiliUp/config.json` 或 Windows `%LOCALAPPDATA%\BiliUp\config.json`，记录知识库目录和批量追踪起始日期。
+- 应用配置保存在 macOS `~/Library/Application Support/BiliUp/config.json` 或 Windows `%LOCALAPPDATA%\BiliUp\config.json`，记录知识库目录、批量追踪起始日期和桌面端口。
 
 项目根目录中已有的旧 `UpList/` 不会自动迁移，后续数据以用户选择的知识库目录为准。
 
@@ -127,26 +133,29 @@ Windows PowerShell：
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-## 构建安装包
+## 构建桌面安装包
 
-macOS 生成 `.app` 和 `.dmg`：
+先安装桌面构建依赖：
 
 ```bash
-.venv/bin/python -m scripts.build macos
+python -m pip install -r requirements-desktop.txt
+npm ci
 ```
 
-Windows 生成 EXE 目录（必须在 Windows 原生环境执行）：
+开发、sidecar 和当前平台 release 构建：
 
-```powershell
-.\.venv\Scripts\python.exe -m scripts.build windows
+```bash
+npm run desktop:dev
+npm run sidecar:build
+npm run desktop:build
 ```
 
-构建产物位于 `dist/`，不提交 Git。安装包名称包含版本号，例如 macOS 的 `BiliUp-0.1.0.dmg` 和 Windows 的 `BiliUp-0.1.0/`。修复或开发完成后先运行源码测试并手动验收，版本确认后再打包。
+构建产物位于 `src-tauri/target/release/bundle/`，不提交 Git。sidecar 与安装包必须在目标原生系统构建。详细步骤见 [DESKTOP.md](DESKTOP.md)。原有 `scripts.build` 保留用于旧 PyInstaller 包验证，不再是 Tauri 发布入口。
 
 ## 当前限制
 
 - OpenCLI、Node.js、Chrome 扩展、yt-dlp、FFmpeg 和 B 站浏览器登录尚未由安装包自动处理。
-- macOS 包尚未签名、公证。Windows EXE 已在 Windows 11 原生环境完成 PyInstaller 构建与启动冒烟验证；代码签名与 SmartScreen 白名单仍待处理。
+- Tauri macOS 包尚未签名、公证；Windows Tauri 安装包尚待原生构建与冒烟验证。代码签名与 SmartScreen 白名单仍待处理。
 - 第三个页签的单视频下载统一写入 `OtherVideos/`，不会加入 UP 自动追踪列表。
 
 ## 许可证

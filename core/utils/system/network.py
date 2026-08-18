@@ -8,8 +8,9 @@ import signal
 import socket
 import subprocess
 import time
+from pathlib import Path
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
 BILIUP_PORT = 8765
@@ -39,14 +40,101 @@ def _is_port_listening(port: int) -> bool:
 
 
 def _is_biliup_service(port: int) -> bool:
-    """通过 FastAPI 的公开元数据确认监听者属于 BiliUp。"""
+    """通过专用健康响应确认监听者属于 BiliUp。"""
     try:
-        with urlopen(f"http://127.0.0.1:{port}/openapi.json", timeout=0.2) as response:
+        with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=0.3) as response:
             data = json.loads(response.read().decode("utf-8"))
     except (OSError, URLError, ValueError, json.JSONDecodeError):
         return False
-    info = data.get("info") if isinstance(data, dict) else None
-    return isinstance(info, dict) and info.get("title") == "BiliUp"
+    return (
+        isinstance(data, dict)
+        and data.get("app") == "biliup"
+        and data.get("status") == "ok"
+    )
+
+
+def _request_biliup_shutdown(port: int) -> bool:
+    request = Request(
+        f"http://127.0.0.1:{port}/api/desktop/shutdown",
+        data=b"",
+        method="POST",
+        headers={"X-BiliUp-Client": "desktop"},
+    )
+    try:
+        with urlopen(request, timeout=0.8) as response:
+            return 200 <= response.status < 300
+    except (OSError, URLError):
+        return False
+
+
+def _process_identity(pid: int) -> dict[str, object]:
+    system = platform.system()
+    path = ""
+    command = ""
+    if system == "Darwin":
+        path_result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "comm="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        command_result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        path = path_result.stdout.strip()
+        command = command_result.stdout.strip()
+    elif system == "Windows":
+        script = (
+            f"Get-CimInstance Win32_Process -Filter \"ProcessId = {pid}\" | "
+            "Select-Object Name,ExecutablePath,CommandLine | ConvertTo-Json -Compress"
+        )
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+        )
+        try:
+            data = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            data = {}
+        if isinstance(data, dict):
+            path = str(data.get("ExecutablePath") or "").strip()
+            command = str(data.get("CommandLine") or "").strip()
+            name = str(data.get("Name") or "").strip()
+            return {"pid": pid, "name": name or Path(path).name, "path": path, "command": command}
+    return {"pid": pid, "name": Path(path).name, "path": path, "command": command}
+
+
+def _is_owned_biliup_process(identity: dict[str, object]) -> bool:
+    fingerprint = " ".join(
+        str(identity.get(key, "")).lower() for key in ("name", "path", "command")
+    )
+    return any(token in fingerprint for token in ("biliup-backend", "app.main", "desktop_entry.py"))
+
+
+def _port_owner_description(port: int) -> str:
+    identities = [_process_identity(pid) for pid in _listener_pids(port)]
+    descriptions = []
+    for identity in identities:
+        pid = identity["pid"]
+        name = str(identity.get("name") or "未知应用")
+        path = str(identity.get("path") or "路径未知")
+        descriptions.append(f"{name}（PID {pid}，{path}）")
+    return "；".join(descriptions) or "未知应用（无法读取 PID）"
+
+
+def _wait_for_port_release(port: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _is_port_listening(port):
+            return True
+        time.sleep(0.1)
+    return not _is_port_listening(port)
 
 
 def _listener_pids(port: int) -> list[int]:
@@ -162,21 +250,31 @@ def stop_existing_biliup_services() -> int:
 def prepare_biliup_port(port: int = BILIUP_PORT) -> int:
     """释放固定端口上的旧 BiliUp 服务，供本次启动接管。
 
-    仅当监听者可通过 ``/openapi.json`` 确认是 BiliUp 时才终止，避免误杀
-    其他本机程序。
+    先请求旧桌面后端优雅退出；超时后仅对健康响应和进程身份都能确认的
+    BiliUp 进程执行强制结束，避免误杀其他本机程序。
     """
     if not _is_port_listening(port):
         return port
     if not _is_biliup_service(port):
-        raise ServicePortError(f"端口 {port} 已被其他程序占用，未自动终止")
+        raise ServicePortError(f"端口 {port} 已被其他程序占用：{_port_owner_description(port)}")
+
+    if _request_biliup_shutdown(port) and _wait_for_port_release(port, 3.0):
+        return port
+
+    if not _is_biliup_service(port):
+        raise ServicePortError(f"端口 {port} 的监听程序在关闭期间发生变化，已拒绝强制结束")
     pids = _listener_pids(port)
     if not pids:
         raise ServicePortError(f"无法识别占用端口 {port} 的旧 BiliUp 进程")
+    identities = [_process_identity(pid) for pid in pids]
+    if not all(_is_owned_biliup_process(identity) for identity in identities):
+        description = "；".join(
+            f"{identity.get('name') or '未知应用'}（PID {identity['pid']}，{identity.get('path') or '路径未知'}）"
+            for identity in identities
+        )
+        raise ServicePortError(f"端口 {port} 响应为 BiliUp，但进程身份无法确认：{description}")
     for pid in pids:
         _terminate_process(pid)
-    deadline = time.monotonic() + 5
-    while _is_port_listening(port) and time.monotonic() < deadline:
-        time.sleep(0.1)
-    if _is_port_listening(port):
+    if not _wait_for_port_release(port, 5.0):
         raise ServicePortError(f"旧的 BiliUp 进程未能释放端口 {port}")
     return port

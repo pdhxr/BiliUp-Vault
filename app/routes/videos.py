@@ -6,8 +6,12 @@ from core.download_progress import progress_rows
 from core.opencli_videos import OpenCliVideoError
 from core.single_video_download import queue_single_video_download
 from core.video_download import queue_downloads
-from core.video_batch_sync import batch_sync_progress, start_batch_sync
-from core.video_batch_track_download import batch_track_download_progress, start_batch_track_download
+from core.video_batch_sync import batch_sync_progress, request_batch_sync_cancel, start_batch_sync
+from core.video_batch_track_download import (
+    batch_track_download_progress,
+    request_batch_track_cancel,
+    start_batch_track_download,
+)
 from core.video_errors import FollowingNotFoundError
 from core.video_sync import list_up_videos
 
@@ -92,6 +96,11 @@ def get_batch_refresh_progress() -> dict[str, object]:
     return batch_sync_progress()
 
 
+@router.post("/up/videos/batch-refresh-cancel")
+def cancel_batch_refresh() -> dict[str, object]:
+    return request_batch_sync_cancel()
+
+
 @router.post("/up/videos/batch-track-download")
 def batch_track_download(request: BatchTrackDownloadRequest) -> dict[str, object]:
     try:
@@ -107,6 +116,11 @@ def batch_track_download(request: BatchTrackDownloadRequest) -> dict[str, object
 @router.get("/up/videos/batch-track-download-progress")
 def get_batch_track_download_progress() -> dict[str, object]:
     return batch_track_download_progress()
+
+
+@router.post("/up/videos/batch-track-download-cancel")
+def cancel_batch_track_download() -> dict[str, object]:
+    return request_batch_track_cancel()
 
 
 @router.post("/videos/download")

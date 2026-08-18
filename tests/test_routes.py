@@ -59,6 +59,32 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.json()["since_date"], "2026-07-01")
         _save.assert_called_once_with("2026-07-01")
 
+    @patch("app.routes.setup.desktop_settings", return_value={
+        "desktop_port": 8765,
+        "config_file": "/tmp/BiliUp/config.json",
+        "current_port": 8765,
+        "desktop_mode": False,
+        "restart_required": False,
+    })
+    def test_desktop_settings_route(self, _settings) -> None:
+        response = self.client.get("/api/settings/desktop")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["desktop_port"], 8765)
+        self.assertEqual(response.json()["config_file"], "/tmp/BiliUp/config.json")
+
+    @patch("app.routes.setup.save_desktop_settings", return_value={
+        "desktop_port": 9000,
+        "config_file": "/tmp/BiliUp/config.json",
+        "current_port": 8765,
+        "desktop_mode": True,
+        "restart_required": True,
+    })
+    def test_update_desktop_settings_route(self, save) -> None:
+        response = self.client.put("/api/settings/desktop", json={"desktop_port": 9000})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["restart_required"])
+        save.assert_called_once_with(9000)
+
     @patch("app.routes.setup.choose_and_configure_library", return_value=Path("/tmp/knowledge-base"))
     def test_select_library_route(self, _select) -> None:
         response = self.client.post("/api/setup/select-library")
@@ -90,6 +116,8 @@ class RouteTests(unittest.TestCase):
         self.assertIn('id="btn-add"', html)
         self.assertIn('id="btn-delete"', html)
         self.assertIn('id="add-dialog"', html)
+        self.assertIn('id="delete-dialog"', html)
+        self.assertIn('id="delete-dialog-confirm"', html)
         self.assertIn('id="up-search-form"', html)
         self.assertIn('id="dialog-confirm"', html)
         self.assertIn('id="up-table"', html)
@@ -106,6 +134,11 @@ class RouteTests(unittest.TestCase):
         self.assertIn('id="single-video-url"', html)
         self.assertIn('id="btn-save-library-root"', html)
         self.assertIn('id="other-status"', html)
+        self.assertIn('id="desktop-port"', html)
+        self.assertIn('id="desktop-config-file-path"', html)
+        self.assertIn('id="btn-stop-sync"', html)
+        self.assertIn('id="btn-stop-batch-track"', html)
+        self.assertIn('src="/static/js/api.js"', html)
         self.assertIn('src="/static/js/up_management.js"', html)
         self.assertIn('src="/static/js/up_search.js"', html)
         self.assertIn("function switchTab", html)
@@ -132,6 +165,8 @@ class RouteTests(unittest.TestCase):
         self.assertIn("同步中…", management_script.text)
         self.assertIn("/api/followings/delete", management_script.text)
         self.assertIn("deleteButton", management_script.text)
+        self.assertIn("deleteDialog.showModal()", management_script.text)
+        self.assertNotIn("window.confirm", management_script.text)
         self.assertIn("setSyncing", management_script.text)
         video_script = self.client.get("/static/js/video_download.js")
         self.assertEqual(video_script.status_code, 200)
@@ -144,10 +179,14 @@ class RouteTests(unittest.TestCase):
         self.assertIn("下载中 ${data.download_done || 0}/${data.download_total || 0}", video_script.text)
         self.assertIn("补齐封面 ${data.cover_done || 0}/${data.cover_total || 0}", video_script.text)
         self.assertIn("/api/up/videos/batch-refresh", video_script.text)
+        self.assertIn("/api/up/videos/batch-refresh-cancel", video_script.text)
+        self.assertIn("批量同步已停止", video_script.text)
         self.assertIn("/api/up/videos/batch-track-download", video_script.text)
         self.assertIn("/api/up/videos/batch-track-download-progress", video_script.text)
+        self.assertIn("/api/up/videos/batch-track-download-cancel", video_script.text)
+        self.assertIn("批量追踪并下载已停止", video_script.text)
         self.assertIn("/api/settings/batch-track", video_script.text)
-        self.assertNotIn("batchButton.disabled", video_script.text)
+        self.assertIn("batchButton.disabled", video_script.text)
         progress_script = self.client.get("/static/js/download_progress.js")
         self.assertEqual(progress_script.status_code, 200)
         self.assertIn("/api/videos/download-progress", progress_script.text)
@@ -155,6 +194,17 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(other_script.status_code, 200)
         self.assertIn("/api/single-video/download", other_script.text)
         self.assertIn("/api/library/open-folder", other_script.text)
+        self.assertIn("/api/settings/desktop", other_script.text)
+        self.assertIn("data.config_file", other_script.text)
+        for path in (
+            "/static/index.html",
+            "/static/js/up_management.js",
+            "/static/js/up_search.js",
+            "/static/js/download_progress.js",
+            "/static/js/video_download.js",
+            "/static/js/other_features.js",
+        ):
+            self.assertNotIn("fetch(", self.client.get(path).text)
 
     @patch("app.routes.up.save_following_and_refresh", return_value=({"uid": "1"}, "created", {"status": "ok", "video_count": 3, "added_count": 3, "pages": 1, "message": ""}))
     def test_following_route(self, _save) -> None:
@@ -211,6 +261,13 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["running"])
 
+    @patch("app.routes.videos.request_batch_sync_cancel", return_value={"status": "stopping"})
+    def test_batch_video_refresh_cancel_route(self, cancel) -> None:
+        response = self.client.post("/api/up/videos/batch-refresh-cancel")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "stopping")
+        cancel.assert_called_once_with()
+
     @patch("app.routes.videos.start_batch_track_download", return_value={"status": "started", "total": 2, "since_date": "20260701"})
     def test_batch_track_download_route(self, _start) -> None:
         response = self.client.post(
@@ -226,6 +283,13 @@ class RouteTests(unittest.TestCase):
         response = self.client.get("/api/up/videos/batch-track-download-progress")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["phase"], "tracking")
+
+    @patch("app.routes.videos.request_batch_track_cancel", return_value={"status": "stopping"})
+    def test_batch_track_download_cancel_route(self, cancel) -> None:
+        response = self.client.post("/api/up/videos/batch-track-download-cancel")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "stopping")
+        cancel.assert_called_once_with()
 
     @patch("app.routes.videos.queue_downloads", return_value=[{"bvid": "BV1", "status": "queued"}])
     def test_video_download_route(self, _queue) -> None:

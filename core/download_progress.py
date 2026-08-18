@@ -7,7 +7,7 @@ from core.download_files import VIDEO_SUFFIXES
 
 _progress: dict[str, dict[str, object]] = {}
 _progress_lock = Lock()
-_terminal_statuses = {"success", "failed"}
+_terminal_statuses = {"success", "failed", "cancelled"}
 _video_suffixes = VIDEO_SUFFIXES | {".part"}
 
 

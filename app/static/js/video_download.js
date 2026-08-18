@@ -3,7 +3,9 @@
   const refreshButton = document.querySelector('#btn-refresh-videos');
   const downloadButton = document.querySelector('#btn-download');
   const batchButton = document.querySelector('#btn-batch-track-video');
+  const stopBatchTrackButton = document.querySelector('#btn-stop-batch-track');
   const batchSyncButton = document.querySelector('#btn-sync');
+  const stopSyncButton = document.querySelector('#btn-stop-sync');
   const sinceDate = document.querySelector('#track-since-date-video');
   const sinceDateStatus = document.querySelector('#track-date-status');
   const checkAll = document.querySelector('#check-all-videos');
@@ -88,7 +90,7 @@
 
   async function loadFollowings() {
     try {
-      const response = await fetch('/api/followings');
+      const response = await window.apiFetch('/api/followings');
       const rows = await responseData(response);
       if (!response.ok) throw new Error(rows.detail || '无法读取 UP 列表');
       const previous = currentUpId;
@@ -120,7 +122,7 @@
 
   async function loadBatchTrackSettings() {
     try {
-      const response = await fetch('/api/settings/batch-track');
+      const response = await window.apiFetch('/api/settings/batch-track');
       const data = await responseData(response);
       if (!response.ok) throw new Error(data.detail || '无法读取批量追踪设置');
       sinceDate.value = data.since_date || '';
@@ -136,7 +138,7 @@
     const value = sinceDate.value;
     sinceDateStatus.textContent = '保存中…';
     saveSinceDatePromise = (async () => {
-      const response = await fetch('/api/settings/batch-track', {
+      const response = await window.apiFetch('/api/settings/batch-track', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ since_date: value }),
@@ -160,7 +162,7 @@
     render();
     if (!upId) return;
     try {
-      const response = await fetch(`/api/up/${encodeURIComponent(upId)}/videos`);
+      const response = await window.apiFetch(`/api/up/${encodeURIComponent(upId)}/videos`);
       const data = await responseData(response);
       if (!response.ok) throw new Error(data.detail || '无法读取视频列表');
       videos = Array.isArray(data) ? data : [];
@@ -182,7 +184,7 @@
     button.textContent = '同步中…';
     setStatus('正在启动视频列表同步…');
     try {
-      const response = await fetch(`/api/up/${encodeURIComponent(upId)}/videos/refresh`, {
+      const response = await window.apiFetch(`/api/up/${encodeURIComponent(upId)}/videos/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ page: 1, limit: 50 }),
@@ -222,10 +224,17 @@
 
   async function pollBatchSync(button, original) {
     try {
-      const response = await fetch('/api/up/videos/batch-refresh-progress');
+      const response = await window.apiFetch('/api/up/videos/batch-refresh-progress');
       const data = await responseData(response);
       if (!response.ok) throw new Error(data.detail || '无法读取批量同步进度');
       if (data.running) {
+        if (data.cancel_requested) {
+          setStatus('正在停止同步…');
+          upFeedback.textContent = '正在停止当前同步，请稍候…';
+          stopSyncButton.disabled = true;
+          stopSyncButton.textContent = '正在停止…';
+          return;
+        }
         const current = data.current_up ? `：${data.current_up}` : '';
         const page = Number(data.current_page || 0);
         const maxPages = Number(data.max_pages || 0);
@@ -245,6 +254,12 @@
       await loadFollowings();
       if (window.upManagement) await window.upManagement.load();
       if (currentUpId) await loadVideos(currentUpId);
+      if (data.cancelled) {
+        const message = `批量同步已停止：已完成 ${data.done || 0}/${data.total || 0}，新增 ${data.added_total || 0} 个视频`;
+        setStatus(message);
+        upFeedback.textContent = message;
+        return;
+      }
       const errorSuffix = Number(data.errors || 0) ? `，${data.errors} 个失败` : '';
       const firstError = Array.isArray(data.results)
         ? data.results.find((item) => item.status === 'error')
@@ -274,6 +289,31 @@
     pollBatchSync(button, original);
   }
 
+  async function stopBatchSync() {
+    stopSyncButton.disabled = true;
+    stopSyncButton.textContent = '正在停止…';
+    upFeedback.textContent = '正在请求停止当前同步…';
+    try {
+      const response = await window.apiFetch('/api/up/videos/batch-refresh-cancel', {
+        method: 'POST',
+      });
+      const data = await responseData(response);
+      if (!response.ok) throw new Error(data.detail || '停止同步失败');
+      if (data.status === 'idle') {
+        restoreBatchSyncButton(batchSyncButton, batchSyncButton.textContent);
+        upFeedback.textContent = '当前没有正在进行的同步任务';
+        return;
+      }
+      setStatus('正在停止同步…');
+      upFeedback.textContent = '正在停止当前同步，请稍候…';
+    } catch (error) {
+      stopSyncButton.disabled = false;
+      stopSyncButton.textContent = '停止同步';
+      upFeedback.textContent = error.message;
+      setStatus(error.message, true);
+    }
+  }
+
   async function refreshAll(upIds, triggerButton = batchSyncButton) {
     const selected = [...new Set((upIds || []).map((value) => String(value).trim()).filter(Boolean))];
     if (selected.length === 0) {
@@ -281,11 +321,11 @@
       return [];
     }
     const original = triggerButton.textContent;
-    if (window.upManagement) window.upManagement.setSyncing(true);
+    if (window.upManagement) window.upManagement.setSyncing(true, true);
     triggerButton.textContent = '同步中…';
     upFeedback.textContent = `正在启动 ${selected.length} 个 UP 主的增量同步…`;
     try {
-      const response = await fetch('/api/up/videos/batch-refresh', {
+      const response = await window.apiFetch('/api/up/videos/batch-refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ up_ids: selected }),
@@ -308,7 +348,7 @@
     downloadButton.disabled = true;
     setStatus(`已提交 ${bvids.length} 个视频下载任务…`);
     try {
-      const response = await fetch('/api/videos/download', {
+      const response = await window.apiFetch('/api/videos/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ up_id: currentUpId, bvids }),
@@ -330,16 +370,30 @@
       batchTrackTimer = null;
     }
     batchButton.textContent = original;
+    batchButton.disabled = false;
+    stopBatchTrackButton.hidden = true;
+    stopBatchTrackButton.disabled = false;
+    stopBatchTrackButton.textContent = '停止追踪下载';
     if (window.upManagement) window.upManagement.setSyncing(false);
     updateButtons();
   }
 
   async function pollBatchTrackDownload(original) {
     try {
-      const response = await fetch('/api/up/videos/batch-track-download-progress');
+      const response = await window.apiFetch('/api/up/videos/batch-track-download-progress');
       const data = await responseData(response);
       if (!response.ok) throw new Error(data.detail || '无法读取批量追踪下载进度');
       if (data.running) {
+        stopBatchTrackButton.hidden = false;
+        if (data.cancel_requested) {
+          const message = '正在停止批量追踪并下载…';
+          setStatus(message);
+          upFeedback.textContent = '正在停止当前追踪或下载，请稍候…';
+          stopBatchTrackButton.disabled = true;
+          stopBatchTrackButton.textContent = '正在停止…';
+          batchButton.textContent = '正在停止…';
+          return;
+        }
         if (data.phase === 'tracking') {
           const completed = Number(data.done || 0);
           const total = Number(data.total || 0);
@@ -367,6 +421,12 @@
       await loadFollowings();
       if (currentUpId) await loadVideos(currentUpId);
       if (window.upManagement) await window.upManagement.load();
+      if (data.cancelled) {
+        const message = `批量追踪并下载已停止：追踪完成 ${data.done || 0}/${data.total || 0}，下载完成 ${data.download_done || 0}/${data.download_total || 0}`;
+        setStatus(message);
+        upFeedback.textContent = message;
+        return;
+      }
       const errorSuffix = Number(data.errors || 0) ? `，${data.errors} 个失败` : '';
       const downloadSummary = `下载 ${data.download_done || 0}/${data.download_total || 0}`;
       const coverSummary = `，封面补齐 ${data.cover_succeeded || 0}/${data.cover_total || 0}`;
@@ -402,12 +462,16 @@
     }
     const original = batchButton.textContent;
     if (window.upManagement) window.upManagement.setSyncing(true);
+    batchButton.disabled = true;
+    stopBatchTrackButton.hidden = false;
+    stopBatchTrackButton.disabled = false;
+    stopBatchTrackButton.textContent = '停止追踪下载';
     batchButton.textContent = '追踪中…';
     upFeedback.textContent = `正在启动 ${ids.length} 个 UP 主的批量追踪…`;
     setStatus('正在启动批量追踪…');
     if (window.downloadProgress) window.downloadProgress.show();
     try {
-      const response = await fetch('/api/up/videos/batch-track-download', {
+      const response = await window.apiFetch('/api/up/videos/batch-track-download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ up_ids: ids }),
@@ -425,6 +489,48 @@
     }
   }
 
+  async function stopBatchTrackDownload() {
+    stopBatchTrackButton.disabled = true;
+    stopBatchTrackButton.textContent = '正在停止…';
+    setStatus('正在停止批量追踪并下载…');
+    upFeedback.textContent = '正在请求停止当前追踪或下载…';
+    try {
+      const response = await window.apiFetch('/api/up/videos/batch-track-download-cancel', {
+        method: 'POST',
+      });
+      const data = await responseData(response);
+      if (!response.ok) throw new Error(data.detail || '停止批量追踪并下载失败');
+      if (data.status === 'idle') {
+        stopBatchTrackButton.hidden = true;
+        stopBatchTrackButton.disabled = false;
+        stopBatchTrackButton.textContent = '停止追踪下载';
+        setStatus('当前没有正在进行的批量追踪下载任务');
+      }
+    } catch (error) {
+      stopBatchTrackButton.disabled = false;
+      stopBatchTrackButton.textContent = '停止追踪下载';
+      upFeedback.textContent = error.message;
+      setStatus(error.message, true);
+    }
+  }
+
+  async function resumeBatchTrackDownload() {
+    try {
+      const response = await window.apiFetch('/api/up/videos/batch-track-download-progress');
+      const data = await responseData(response);
+      if (!response.ok || !data.running) return;
+      const original = batchButton.textContent;
+      if (window.upManagement) window.upManagement.setSyncing(true);
+      batchButton.disabled = true;
+      stopBatchTrackButton.hidden = false;
+      if (batchTrackTimer) clearInterval(batchTrackTimer);
+      batchTrackTimer = setInterval(() => pollBatchTrackDownload(original), 1000);
+      await pollBatchTrackDownload(original);
+    } catch (_) {
+      // 页面仍可正常使用；用户下一次启动任务时会重新获取状态。
+    }
+  }
+
   selector.addEventListener('change', () => loadVideos(selector.value));
   sinceDate.addEventListener('change', () => {
     render();
@@ -434,6 +540,8 @@
   refreshButton.addEventListener('click', () => refresh(currentUpId));
   downloadButton.addEventListener('click', downloadSelected);
   batchButton.addEventListener('click', startBatchTrackDownload);
+  stopBatchTrackButton.addEventListener('click', stopBatchTrackDownload);
+  stopSyncButton.addEventListener('click', stopBatchSync);
   batchSyncButton.addEventListener('click', () => {
     const selectedIds = window.upManagement ? window.upManagement.getSelectedIds() : [];
     refreshAll(selectedIds, batchSyncButton).catch((error) => {
@@ -466,4 +574,5 @@
 
   window.upVideoSync = { refresh, batchRefresh: refreshAll };
   pollBatchSync(batchSyncButton, batchSyncButton.textContent);
+  resumeBatchTrackDownload();
 }());

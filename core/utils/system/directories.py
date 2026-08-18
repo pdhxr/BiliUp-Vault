@@ -9,6 +9,9 @@ class DirectoryPickerError(RuntimeError):
 
 
 def application_config_directory() -> Path:
+    override = os.environ.get("BILIUP_DATA_DIR", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
     system = platform.system()
     if system == "Darwin":
         return Path.home() / "Library/Application Support/BiliUp"

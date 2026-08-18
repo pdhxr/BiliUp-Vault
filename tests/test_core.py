@@ -1,37 +1,41 @@
 import json
 import shutil
 import subprocess
+import time
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from threading import Event
+from unittest.mock import ANY, MagicMock, patch
 
 from core.configuration import (
     batch_track_since_date,
     configure_knowledge_base,
+    desktop_port,
     knowledge_base_root,
     set_batch_track_since_date,
+    set_desktop_port,
 )
 from core.download_progress import progress_rows, set_progress
 from core.download_files import fix_hevc_tag
 from core.followings import save_following
 from core.followings import save_following_and_refresh
 from core.following_delete import delete_followings
-from core.opencli_videos import DOWNLOAD_QUALITY_FALLBACKS, OpenCliVideoError, _items, download_video, fetch_user_videos, fetch_video_metadata, fetch_video_subtitles
+from core.opencli_videos import DOWNLOAD_QUALITY_FALLBACKS, OpenCliCancelledError, OpenCliVideoError, _items, download_video, fetch_user_videos, fetch_video_metadata, fetch_video_subtitles
 from core.repositories.followings import list_rows, save, set_scheduled_tracking
 from core.repositories.library import list_local_videos, record_download, record_other_download
 from core.single_video_download import _run_job as run_single_video_job, queue_single_video_download
 from core.repositories.videos import list_videos, mark_downloaded, merge_videos
 from core.subtitle_download import download_subtitle, has_transcript
 from core.up_search import _parse_items, search_up
-from core.video_download import _download_one, queue_downloads
+from core.video_download import DownloadCancelledError, _download_one, _run_job as run_video_download_job, queue_downloads
 from core.video_batch_track_download import _run as run_batch_track_download
-from core.video_batch_track_download import start_batch_track_download
+from core.video_batch_track_download import request_batch_track_cancel, start_batch_track_download
 from core.video_cover_backfill import backfill_covers_for_up
 from core.video_reconcile import reconcile_up_videos
 from core.video_sync import refresh_up_videos, refresh_up_videos_with_details
-from core.utils.system.directories import choose_directory, open_directory
+from core.utils.system.directories import application_config_directory, choose_directory, open_directory
 from core.utils.system.resources import resource_path
-from core.utils.system.process import find_opencli, run_ffmpeg, run_opencli
+from core.utils.system.process import ProcessCancelledError, find_opencli, run_ffmpeg, run_opencli
 from core.utils.system.network import ServicePortError, available_local_port, prepare_biliup_port, stop_existing_biliup_services
 
 
@@ -121,6 +125,21 @@ class CoreTests(unittest.TestCase):
         download_video("BV1abc", str(self.root / "downloads"))
         self.assertEqual(run.call_args_list[0].args[0][-2:], ["--window", "background"])
         self.assertEqual(run.call_args_list[1].args[0][-2:], ["--window", "background"])
+
+    @patch("core.opencli_videos.run_opencli", side_effect=ProcessCancelledError("已取消"))
+    def test_video_download_translates_managed_process_cancellation(self, run) -> None:
+        cancel_event = Event()
+        cancel_event.set()
+        with self.assertRaisesRegex(OpenCliCancelledError, "视频下载已停止"):
+            download_video("BV1abc", str(self.root / "downloads"), cancel_event=cancel_event)
+        self.assertIs(run.call_args.kwargs["cancel_event"], cancel_event)
+
+    @patch("core.video_download._download_one", side_effect=DownloadCancelledError("已停止"))
+    def test_video_download_job_records_cancelled_status(self, _download) -> None:
+        cancel_event = Event()
+        run_video_download_job("123", "BVcancelled", cancel_event)
+        row = progress_rows(["BVcancelled"])[0]
+        self.assertEqual(row["status"], "cancelled")
 
     @patch("core.opencli_videos.run_opencli")
     def test_single_video_metadata_normalizes_field_list(self, run) -> None:
@@ -229,12 +248,13 @@ class CoreTests(unittest.TestCase):
         candidates.return_value = [executable]
         self.assertEqual(find_opencli(), executable)
 
-    @patch("core.utils.system.process.subprocess.run")
+    @patch("core.utils.system.process.subprocess.Popen")
     @patch("core.utils.system.process.find_opencli", return_value=Path("tmp/bin/opencli"))
-    def test_run_opencli_adds_executable_directory_to_path(self, _find, run) -> None:
-        run.return_value.returncode = 0
+    def test_run_opencli_adds_executable_directory_to_path(self, _find, popen) -> None:
+        popen.return_value.communicate.return_value = ("", "")
+        popen.return_value.returncode = 0
         run_opencli(["--version"], timeout=5)
-        self.assertTrue(run.call_args.kwargs["env"]["PATH"].startswith("tmp/bin"))
+        self.assertTrue(popen.call_args.kwargs["env"]["PATH"].startswith("tmp/bin"))
 
     @patch("core.utils.system.network.socket.socket")
     def test_occupied_preferred_port_uses_available_port(self, socket_factory) -> None:
@@ -247,19 +267,60 @@ class CoreTests(unittest.TestCase):
 
     @patch("core.utils.system.network._terminate_process")
     @patch("core.utils.system.network._listener_pids", return_value=[12345])
+    @patch("core.utils.system.network._process_identity", return_value={
+        "pid": 12345,
+        "name": "biliup-backend",
+        "path": "/Applications/BiliUp.app/Contents/MacOS/biliup-backend",
+        "command": "biliup-backend --port 8765",
+    })
+    @patch("core.utils.system.network._request_biliup_shutdown", return_value=False)
     @patch("core.utils.system.network._is_biliup_service", return_value=True)
-    @patch("core.utils.system.network._is_port_listening", side_effect=[True, False, False])
-    def test_fixed_port_replaces_existing_biliup_service(self, listening, _biliup, pids, terminate) -> None:
+    @patch("core.utils.system.network._is_port_listening", side_effect=[True, False])
+    def test_fixed_port_replaces_existing_biliup_service(
+        self, listening, _biliup, _shutdown, _identity, pids, terminate,
+    ) -> None:
         self.assertEqual(prepare_biliup_port(8765), 8765)
         pids.assert_called_once_with(8765)
         terminate.assert_called_once_with(12345)
-        self.assertEqual(listening.call_count, 3)
+        self.assertEqual(listening.call_count, 2)
 
+    @patch("core.utils.system.network._terminate_process")
+    @patch("core.utils.system.network._wait_for_port_release", return_value=True)
+    @patch("core.utils.system.network._request_biliup_shutdown", return_value=True)
+    @patch("core.utils.system.network._is_biliup_service", return_value=True)
+    @patch("core.utils.system.network._is_port_listening", return_value=True)
+    def test_fixed_port_prefers_graceful_biliup_shutdown(
+        self, _listening, _biliup, shutdown, wait, terminate,
+    ) -> None:
+        self.assertEqual(prepare_biliup_port(8765), 8765)
+        shutdown.assert_called_once_with(8765)
+        wait.assert_called_once_with(8765, 3.0)
+        terminate.assert_not_called()
+
+    @patch("core.utils.system.network._port_owner_description", return_value="Safari（PID 42，/Applications/Safari.app）")
     @patch("core.utils.system.network._is_biliup_service", return_value=False)
     @patch("core.utils.system.network._is_port_listening", return_value=True)
-    def test_fixed_port_never_terminates_an_unrelated_service(self, _listening, _biliup) -> None:
-        with self.assertRaisesRegex(ServicePortError, "其他程序占用"):
+    def test_fixed_port_never_terminates_an_unrelated_service(self, _listening, _biliup, _owner) -> None:
+        with self.assertRaisesRegex(ServicePortError, "Safari.*PID 42"):
             prepare_biliup_port(8765)
+
+    @patch("core.utils.system.network._terminate_process")
+    @patch("core.utils.system.network._process_identity", return_value={
+        "pid": 42,
+        "name": "python",
+        "path": "/usr/bin/python",
+        "command": "python unrelated.py",
+    })
+    @patch("core.utils.system.network._listener_pids", return_value=[42])
+    @patch("core.utils.system.network._request_biliup_shutdown", return_value=False)
+    @patch("core.utils.system.network._is_biliup_service", return_value=True)
+    @patch("core.utils.system.network._is_port_listening", return_value=True)
+    def test_fixed_port_refuses_unverified_force_kill(
+        self, _listening, _biliup, _shutdown, _pids, _identity, terminate,
+    ) -> None:
+        with self.assertRaisesRegex(ServicePortError, "进程身份无法确认"):
+            prepare_biliup_port(8765)
+        terminate.assert_not_called()
 
     @patch("core.utils.system.network._terminate_process")
     @patch("core.utils.system.network._is_port_listening", return_value=False)
@@ -430,7 +491,7 @@ class CoreTests(unittest.TestCase):
         configured_root.return_value = library_root
         jobs = queue_downloads("123", ["BV19UGW6HEV1"])
         self.assertEqual(jobs[0]["bvid"], "BV19UGw6hEV1")
-        self.assertEqual(submit.call_args.args[1:], ("123", "BV19UGw6hEV1"))
+        self.assertEqual(submit.call_args.args[1:], ("123", "BV19UGw6hEV1", None))
 
     @patch("core.video_download.ensure_video_cover", return_value=False)
     @patch("core.video_download._ensure_subtitle")
@@ -573,16 +634,17 @@ class CoreTests(unittest.TestCase):
                 self.assertFalse(fix_hevc_tag(video))
         run_ffmpeg.assert_not_called()
 
-    @patch("core.utils.system.process.subprocess.run")
+    @patch("core.utils.system.process.subprocess.Popen")
     @patch("core.utils.system.process.shutil.which", return_value="C:/ffmpeg/bin/ffmpeg.exe")
-    def test_ffmpeg_uses_no_window_flag_on_windows(self, _which, run) -> None:
-        run.return_value = subprocess.CompletedProcess([], 0, stdout=b"", stderr=b"")
+    def test_ffmpeg_uses_no_window_flag_on_windows(self, _which, popen) -> None:
+        popen.return_value.communicate.return_value = (b"", b"")
+        popen.return_value.returncode = 0
         with (
             patch("core.utils.system.process.os.name", "nt"),
             patch.object(subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True),
         ):
             run_ffmpeg(["-version"], timeout=5)
-        self.assertEqual(run.call_args.kwargs["creationflags"], 0x08000000)
+        self.assertEqual(popen.call_args.kwargs["creationflags"], 0x08000000)
 
     @patch("core.video_download.fix_hevc_tag", return_value=False)
     @patch("core.video_download._ensure_subtitle", return_value=False)
@@ -744,8 +806,8 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(state["download_done"], 1)
         self.assertEqual(state["results"][0]["new_videos"][0]["bvid"], "BVnew")
         self.assertEqual(state["results"][0]["pending_videos"][0]["bvid"], "BVnew")
-        refresh.assert_called_once_with("123", since_date="20260701")
-        queue.assert_called_once_with("123", ["BVnew"])
+        refresh.assert_called_once_with("123", since_date="20260701", cancel_event=ANY)
+        queue.assert_called_once_with("123", ["BVnew"], cancel_event=ANY)
         progress.assert_called()
 
     @patch("core.video_batch_track_download.get_progress", return_value={"status": "success"})
@@ -787,12 +849,47 @@ class CoreTests(unittest.TestCase):
             [video["bvid"] for video in state["results"][0]["pending_videos"]],
             ["BVold", "BVnew"],
         )
-        refresh.assert_called_once_with("123", since_date="20260715")
-        queue.assert_called_once_with("123", ["BVold", "BVnew"])
+        refresh.assert_called_once_with("123", since_date="20260715", cancel_event=ANY)
+        queue.assert_called_once_with("123", ["BVold", "BVnew"], cancel_event=ANY)
         progress.assert_called()
         from core.video_batch_track_download import _state, _state_lock
         with _state_lock:
             _state.update({"added_total": 0, "download_total": 0, "download_done": 0, "download_failed": 0})
+
+    @patch("core.video_batch_track_download.queue_downloads")
+    @patch("core.video_batch_track_download.queue_missing_subtitles_for_up")
+    @patch("core.video_batch_track_download.refresh_up_videos_with_details")
+    def test_z_batch_track_download_stop_interrupts_current_tracking(
+        self, refresh, subtitles, queue
+    ) -> None:
+        library_root = self.root / "library"
+        save("123", "示例 UP", "简介", library_root / "UpList")
+        entered = Event()
+
+        def wait_for_cancel(_uid, *, since_date, cancel_event):
+            self.assertEqual(since_date, "20260701")
+            entered.set()
+            self.assertTrue(cancel_event.wait(2))
+            raise OpenCliCancelledError("视频同步已停止")
+
+        refresh.side_effect = wait_for_cancel
+        with patch("core.video_batch_track_download.knowledge_base_root", return_value=library_root):
+            started = start_batch_track_download(["123"], "20260701")
+            self.assertEqual(started["status"], "started")
+            self.assertTrue(entered.wait(2))
+            self.assertEqual(request_batch_track_cancel()["status"], "stopping")
+            deadline = time.monotonic() + 2
+            from core.video_batch_track_download import batch_track_download_progress
+            while batch_track_download_progress()["running"] and time.monotonic() < deadline:
+                time.sleep(0.02)
+
+        state = batch_track_download_progress()
+        self.assertFalse(state["running"])
+        self.assertTrue(state["cancelled"])
+        self.assertEqual(state["phase"], "cancelled")
+        self.assertEqual(state["results"][0]["status"], "cancelled")
+        subtitles.assert_not_called()
+        queue.assert_not_called()
 
     @patch("core.video_batch_track_download.Thread")
     @patch("core.video_batch_track_download.batch_track_since_date", return_value="2026-07-01")
@@ -837,6 +934,43 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(data["knowledge_base_root"], str(library_root.resolve()))
         self.assertEqual(data["batch_track_since_date"], "2026-07-01")
         self.assertEqual(batch_track_since_date(configuration), "2026-07-01")
+
+    def test_desktop_port_defaults_without_rewriting_old_config(self) -> None:
+        configuration = self.root / "app-data/config.json"
+        self.assertEqual(desktop_port(configuration), 8765)
+        self.assertFalse(configuration.exists())
+
+    @patch("core.setup.configuration_file", return_value=Path("/tmp/BiliUp/config.json"))
+    @patch("core.setup.desktop_port", return_value=8765)
+    def test_desktop_settings_reports_configuration_file(self, _port, _configuration) -> None:
+        from core.setup import desktop_settings
+
+        self.assertEqual(desktop_settings()["config_file"], "/tmp/BiliUp/config.json")
+
+    def test_desktop_port_accepts_boundaries_and_preserves_fields(self) -> None:
+        library_root = self.root / "knowledge-base"
+        configuration = self.root / "app-data/config.json"
+        library_root.mkdir(parents=True)
+        configure_knowledge_base(library_root, configuration)
+        self.assertEqual(set_desktop_port(1024, configuration), 1024)
+        self.assertEqual(set_desktop_port(65535, configuration), 65535)
+        configure_knowledge_base(library_root, configuration)
+        data = json.loads(configuration.read_text(encoding="utf-8"))
+        self.assertEqual(data["desktop_port"], 65535)
+        self.assertEqual(data["knowledge_base_root"], str(library_root.resolve()))
+
+    def test_desktop_port_rejects_invalid_values(self) -> None:
+        library_root = self.root / "knowledge-base"
+        configuration = self.root / "app-data/config.json"
+        library_root.mkdir(parents=True)
+        configure_knowledge_base(library_root, configuration)
+        for value in (True, None, 8765.0, "8765", 1023, 65536):
+            with self.subTest(value=value), self.assertRaises(Exception):
+                set_desktop_port(value, configuration)
+
+    def test_desktop_data_directory_override_is_explicit(self) -> None:
+        with patch.dict("os.environ", {"BILIUP_DATA_DIR": str(self.root / "desktop-data")}):
+            self.assertEqual(application_config_directory(), (self.root / "desktop-data").resolve())
 
     def test_scheduled_tracking_setting_is_persisted_in_followings(self) -> None:
         save("123", "示例 UP", "简介", self.root)

@@ -83,7 +83,7 @@
 
   async function checkRuntime() {
     try {
-      const response = await fetch('/api/runtime-status');
+      const response = await window.apiFetch('/api/runtime-status');
       const data = await responseData(response);
       runtimeReady = Boolean(response.ok && data.ready);
       searchButton.disabled = !runtimeReady;
@@ -111,7 +111,7 @@
     setMessage(addMessage, '');
     resultsContainer.replaceChildren();
     try {
-      const response = await fetch('/api/up-search', {
+      const response = await window.apiFetch('/api/up-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname }),
@@ -134,7 +134,7 @@
     confirmButton.disabled = true;
     setMessage(addMessage, '正在写入…');
     try {
-      const response = await fetch('/api/followings', {
+      const response = await window.apiFetch('/api/followings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uid: selected.uid, nickname: selected.nickname, bio: selected.bio || '' }),

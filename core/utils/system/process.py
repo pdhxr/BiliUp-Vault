@@ -1,8 +1,123 @@
 import os
 import platform
 import shutil
+import signal
 import subprocess
+import time
+from threading import Event, Lock
 from pathlib import Path
+
+
+_managed_processes: set[subprocess.Popen] = set()
+_managed_processes_lock = Lock()
+
+
+class ProcessCancelledError(RuntimeError):
+    """The caller cancelled a managed subprocess before it completed."""
+
+
+def _terminate_process(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+            capture_output=True,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline and process.poll() is None:
+        time.sleep(0.02)
+    if os.name != "nt" and process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def _run_managed(
+    command: list[str],
+    *,
+    timeout: int,
+    text: bool,
+    encoding: str | None = None,
+    env: dict[str, str] | None = None,
+    cancel_event: Event | None = None,
+) -> subprocess.CompletedProcess:
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=text,
+        encoding=encoding,
+        env=env,
+        **({"start_new_session": True} if os.name != "nt" else {}),
+        **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+    )
+    with _managed_processes_lock:
+        _managed_processes.add(process)
+    try:
+        if cancel_event is None:
+            stdout, stderr = process.communicate(timeout=timeout)
+        else:
+            deadline = time.monotonic() + timeout
+            while True:
+                if cancel_event.is_set():
+                    _terminate_process(process)
+                    process.communicate()
+                    raise ProcessCancelledError("子进程已取消")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.2, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        raise
+    finally:
+        with _managed_processes_lock:
+            _managed_processes.discard(process)
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+def terminate_managed_processes() -> None:
+    with _managed_processes_lock:
+        processes = list(_managed_processes)
+    for process in processes:
+        if process.poll() is not None:
+            continue
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                continue
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline and any(process.poll() is None for process in processes):
+        time.sleep(0.02)
+    if os.name != "nt":
+        for process in processes:
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 def _candidate_paths() -> list[Path]:
@@ -50,22 +165,25 @@ def _process_environment(executable: Path) -> dict[str, str]:
     return environment
 
 
-def run_opencli(arguments: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+def run_opencli(
+    arguments: list[str],
+    timeout: int,
+    *,
+    cancel_event: Event | None = None,
+) -> subprocess.CompletedProcess[str]:
     executable = find_opencli()
     if executable is None:
         raise FileNotFoundError("opencli")
     command = [str(executable), *arguments]
     if os.name == "nt":
         command = [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", *command]
-    return subprocess.run(
+    return _run_managed(
         command,
-        capture_output=True,
         text=True,
         encoding="utf-8",
         timeout=timeout,
-        check=False,
         env=_process_environment(executable),
-        **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+        cancel_event=cancel_event,
     )
 
 
@@ -73,13 +191,10 @@ def _run_media_tool(name: str, arguments: list[str], timeout: int) -> subprocess
     executable = shutil.which(name)
     if not executable:
         raise FileNotFoundError(name)
-    return subprocess.run(
+    return _run_managed(
         [executable, *arguments],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        text=False,
         timeout=timeout,
-        check=False,
-        **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
     )
 
 

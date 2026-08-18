@@ -1,0 +1,63 @@
+import importlib.util
+import json
+import subprocess
+import tomllib
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from core.version import APP_VERSION
+
+
+_SCRIPT = Path(__file__).resolve().parents[1] / "packaging/build_sidecar.py"
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_SPEC = importlib.util.spec_from_file_location("biliup_build_sidecar", _SCRIPT)
+assert _SPEC and _SPEC.loader
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+build_sidecar = _MODULE.build_sidecar
+rust_target = _MODULE.rust_target
+
+
+class TauriPackagingTests(unittest.TestCase):
+    def test_release_manifests_match_application_version(self) -> None:
+        package = json.loads((_PROJECT_ROOT / "package.json").read_text(encoding="utf-8"))
+        cargo = tomllib.loads((_PROJECT_ROOT / "src-tauri/Cargo.toml").read_text(encoding="utf-8"))
+
+        self.assertEqual(package["version"], APP_VERSION)
+        self.assertEqual(cargo["package"]["version"], APP_VERSION)
+
+    def test_bundle_declares_platform_icons(self) -> None:
+        config = json.loads((_PROJECT_ROOT / "src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+        icons = config["bundle"]["icon"]
+
+        self.assertIn("icons/icon.icns", icons)
+        self.assertIn("icons/icon.ico", icons)
+        for relative_path in icons:
+            self.assertTrue((_PROJECT_ROOT / "src-tauri" / relative_path).is_file())
+
+    @patch.object(_MODULE.subprocess, "run")
+    def test_rust_target_uses_host_tuple(self, run) -> None:
+        run.return_value = subprocess.CompletedProcess([], 0, stdout="aarch64-apple-darwin\n", stderr="")
+        self.assertEqual(rust_target(), "aarch64-apple-darwin")
+        self.assertEqual(run.call_args.args[0], ["rustc", "--print", "host-tuple"])
+
+    @patch.object(_MODULE.shutil, "copy2")
+    @patch.object(_MODULE.Path, "is_file", return_value=True)
+    @patch.object(_MODULE.Path, "chmod")
+    @patch.object(_MODULE.Path, "stat")
+    @patch.object(_MODULE.Path, "mkdir")
+    @patch.object(_MODULE.subprocess, "run")
+    @patch.object(_MODULE, "rust_target", return_value="aarch64-apple-darwin")
+    def test_sidecar_uses_tauri_target_name(
+        self, _target, run, _mkdir, stat, _chmod, _is_file, copy
+    ) -> None:
+        stat.return_value.st_mode = 0o644
+        destination = build_sidecar()
+        self.assertEqual(destination.name, "biliup-backend-aarch64-apple-darwin")
+        self.assertIn("PyInstaller", run.call_args.args[0])
+        self.assertEqual(Path(copy.call_args.args[1]).name, destination.name)
+
+
+if __name__ == "__main__":
+    unittest.main()

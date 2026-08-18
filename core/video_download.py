@@ -15,7 +15,12 @@ from core.download_files import (
     rename_video,
 )
 from core.download_progress import get_progress, now_iso, set_progress, watch_download_size
-from core.opencli_videos import DOWNLOAD_QUALITY_FALLBACKS, OpenCliVideoError, download_video
+from core.opencli_videos import (
+    DOWNLOAD_QUALITY_FALLBACKS,
+    OpenCliCancelledError,
+    OpenCliVideoError,
+    download_video,
+)
 from core.repositories.followings import find, update_video_stats
 from core.repositories.library import find_local_video, record_download
 from core.repositories.videos import downloaded_count, list_videos, mark_downloaded, safe_video_directory_name
@@ -24,6 +29,10 @@ from core.video_errors import FollowingNotFoundError
 
 
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="biliup-download")
+
+
+class DownloadCancelledError(RuntimeError):
+    pass
 
 
 def _ensure_subtitle(bvid: str, video_path: Path) -> bool:
@@ -37,7 +46,9 @@ def _download_directory(root: Path, following: dict, uid: str, date: str) -> Pat
     return root / "SortedMp4" / nickname / month
 
 
-def _download_one(uid: str, bvid: str) -> None:
+def _download_one(uid: str, bvid: str, *, cancel_event: Event | None = None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise DownloadCancelledError("视频下载已停止")
     root = knowledge_base_root()
     following = find(uid, root / "UpList")
     if following is None:
@@ -114,8 +125,21 @@ def _download_one(uid: str, bvid: str) -> None:
     last_error = ""
     try:
         for attempt, quality in enumerate(DOWNLOAD_QUALITY_FALLBACKS):
+            if cancel_event is not None and cancel_event.is_set():
+                raise DownloadCancelledError("视频下载已停止")
             try:
-                download_video(bvid, str(directory), quality=quality)
+                if cancel_event is None:
+                    download_video(bvid, str(directory), quality=quality)
+                else:
+                    download_video(
+                        bvid,
+                        str(directory),
+                        quality=quality,
+                        cancel_event=cancel_event,
+                    )
+            except OpenCliCancelledError as exc:
+                remove_partial_files(directory, bvid)
+                raise DownloadCancelledError("视频下载已停止") from exc
             except OpenCliVideoError as exc:
                 last_error = str(exc)
             source = find_video_file(directory, bvid, before)
@@ -156,7 +180,12 @@ def _download_one(uid: str, bvid: str) -> None:
     )
 
 
-def queue_downloads(uid: str, bvids: list[str]) -> list[dict[str, object]]:
+def queue_downloads(
+    uid: str,
+    bvids: list[str],
+    *,
+    cancel_event: Event | None = None,
+) -> list[dict[str, object]]:
     root = knowledge_base_root()
     if find(uid, root / "UpList") is None:
         raise FollowingNotFoundError(f"未找到 UP {uid}")
@@ -185,12 +214,18 @@ def queue_downloads(uid: str, bvids: list[str]) -> list[dict[str, object]]:
             size_bytes=0,
         )
         jobs.append(job)
-        _executor.submit(_run_job, uid, bvid)
+        _executor.submit(_run_job, uid, bvid, cancel_event)
     return jobs
 
 
-def _run_job(uid: str, bvid: str) -> None:
+def _run_job(uid: str, bvid: str, cancel_event: Event | None = None) -> None:
     try:
-        _download_one(uid, bvid)
+        _download_one(uid, bvid, cancel_event=cancel_event)
+    except DownloadCancelledError:
+        set_progress(bvid, status="cancelled", error="", finished_at=now_iso())
     except Exception as exc:
         set_progress(bvid, status="failed", error=str(exc), finished_at=now_iso())
+
+
+def shutdown_downloads() -> None:
+    _executor.shutdown(wait=False, cancel_futures=True)

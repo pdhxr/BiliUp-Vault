@@ -126,9 +126,13 @@ body {
 .search-uid { color: #6b7280; font-size: 12px; }
 .search-bio { overflow: hidden; color: #4b5563; text-overflow: ellipsis; white-space: nowrap; }
 .dialog-footer { display: flex; justify-content: flex-end; margin-top: 14px; }
+.confirm-dialog { width: min(440px, calc(100vw - 32px)); }
+.confirm-dialog-message { color: #111827; line-height: 1.6; }
+.confirm-dialog-warning { margin-top: 10px; color: #6b7280; font-size: 13px; line-height: 1.6; }
+.confirm-dialog-actions { gap: 8px; }
 
 .toolbar-group, .feature-actions { display: flex; align-items: center; gap: 10px; }
-.track-date, .up-selector, .library-root-input, .single-video-input {
+.track-date, .up-selector, .library-root-input, .single-video-input, .desktop-port-input {
   border: 1px solid #d1d5db;
   background: #fff;
   color: #374151;
@@ -139,7 +143,7 @@ body {
 .track-date-label { color: #4b5563; font-size: 13px; white-space: nowrap; }
 .track-date-hint { color: #6b7280; font-size: 12px; white-space: nowrap; }
 .track-date-status { min-width: 42px; color: #6b7280; font-size: 12px; white-space: nowrap; }
-.track-date:focus, .up-selector:focus, .library-root-input:focus, .single-video-input:focus {
+.track-date:focus, .up-selector:focus, .library-root-input:focus, .single-video-input:focus, .desktop-port-input:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
 }
@@ -313,6 +317,12 @@ body {
 .feature-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .library-root-input, .single-video-input { flex: 1 1 0; min-width: 160px; height: 40px; padding: 0 12px; border-radius: 8px; }
 .single-video-input { height: 44px; padding: 0 16px; font-size: 15px; }
+.desktop-port-row label { color: #4b5563; font-weight: 600; }
+.desktop-port-input { width: 130px; height: 40px; padding: 0 12px; border-radius: 8px; }
+.desktop-port-status { color: #6b7280; font-size: 13px; }
+.desktop-port-status.error { color: #b42318; }
+.desktop-config-file { margin-top: 10px; color: #6b7280; font-size: 13px; }
+.desktop-config-file code { color: #374151; overflow-wrap: anywhere; user-select: text; }
 
 @media (max-width: 640px) {
   .top-bar { padding: 12px 16px; }

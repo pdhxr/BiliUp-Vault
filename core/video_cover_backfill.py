@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from pathlib import Path
+from threading import Event
 
 from core.cover_download import ensure_video_cover
 from core.repositories.followings import find
@@ -20,6 +21,7 @@ def backfill_covers_for_up(
     *,
     root: Path,
     on_progress: Callable[[int, int, int], None] | None = None,
+    cancel_event: Event | None = None,
 ) -> dict[str, int]:
     """补齐期限内已下载视频的封面，不重新下载视频。"""
     following = find(uid, root / "UpList")
@@ -52,6 +54,8 @@ def backfill_covers_for_up(
     if on_progress:
         on_progress(0, total, 0)
     for completed, (video, local, video_path) in enumerate(candidates, 1):
+        if cancel_event is not None and cancel_event.is_set():
+            break
         bvid = str(video.get("bvid", ""))
         if ensure_video_cover(bvid, video_path):
             succeeded += 1

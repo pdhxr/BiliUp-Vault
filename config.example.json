@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "knowledge_base_root": "/path/to/your/video-library",
+  "batch_track_since_date": "",
+  "desktop_port": 8765
+}

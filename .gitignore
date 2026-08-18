@@ -6,6 +6,12 @@
 # Local configuration
 /config.json
 /config.local.json
+/ReleaseGuide.local.md
+.env
+.env.*
+!.env.example
+/.npmrc
+/.pypirc
 
 # Python environments and test artifacts
 /.venv/
@@ -19,9 +25,38 @@
 /build/
 /dist/
 /*.spec
+/src-tauri/binaries/
+*.dmg
+*.msi
+*.pkg
+*.app/
+*.key
+*.pem
+*.p12
+*.pfx
+*.mobileprovision
+
+# Tauri and Node build artifacts
+/node_modules/
+/src-tauri/target/
+/src-tauri/gen/
+/.worktrees/
+/desktop/icons/candidates/
+# Tauri icon generation also emits unused mobile/Store assets; desktop builds only
+# use the five files declared in src-tauri/tauri.conf.json.
+/src-tauri/icons/android/
+/src-tauri/icons/ios/
+/src-tauri/icons/Square*.png
+/src-tauri/icons/StoreLogo.png
+/src-tauri/icons/icon.png
+/src-tauri/icons/64x64.png
 
 # Local editor and operating-system files
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

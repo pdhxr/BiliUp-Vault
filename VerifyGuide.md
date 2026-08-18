@@ -1,13 +1,13 @@
 # BiliUp 源码验证指南
 
-本指南用于开发完成后的本地源码验证；不需要构建 DMG 或 EXE。
+本指南用于开发完成后的本地源码验证；不需要构建安装包。Tauri 开发运行、候选包和桌面专项验收见 [DESKTOP.md](DESKTOP.md)。
 
 ## 1. 打开项目目录
 
 macOS 的终端中：
 
 ```bash
-cd /Users/juliehou/Project/BiliUp
+cd /path/to/BiliUp
 ```
 
 Windows PowerShell 中，进入克隆后的 `BiliUp` 项目目录。
@@ -27,7 +27,7 @@ python -m pip install -r requirements.txt
 激活成功后，终端提示符通常会显示 `(.venv)`。后续再次验证时：
 
 ```bash
-cd /Users/juliehou/Project/BiliUp
+cd /path/to/BiliUp
 source .venv/bin/activate
 ```
 
@@ -62,11 +62,11 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 python -m app.main
 ```
 
-该命令会固定启动在 `http://127.0.0.1:8765/`。服务运行期间保持终端窗口打开；结束时按 `Ctrl+C`。
+该命令以普通 Web 模式启动在 `http://127.0.0.1:8765/`。桌面版可通过共用 `config.json` 的 `desktop_port` 修改其下次启动端口；Web 源码入口仍使用 `8765`。服务运行期间保持终端窗口打开；结束时按 `Ctrl+C`。
 
 ### 检查和释放 macOS 端口
 
-BiliUp 固定使用 `8765`。若端口被旧 BiliUp 占用，应用会在确认身份后自动停止旧实例；若被其他程序占用，应用会报错且不会终止该程序。遇到端口占用时，可先查看占用进程：
+Web 源码入口使用 `8765`。Tauri 桌面版通过单实例插件避免重复启动；若端口被其他程序占用，它会显示错误且不会终止未知程序。遇到源码服务端口占用时，可先查看占用进程：
 
 ```bash
 lsof -nP -iTCP:8765 -sTCP:LISTEN
@@ -110,6 +110,7 @@ Stop-Process -Id <PID>
 ```bash
 curl -s http://127.0.0.1:8765/api/setup-status
 curl -s http://127.0.0.1:8765/api/followings
+curl -s http://127.0.0.1:8765/api/health
 ```
 
 检查 OpenCLI 状态及搜索接口：
@@ -131,6 +132,7 @@ curl -s -X POST http://127.0.0.1:8765/api/up/videos/batch-refresh \
   -H 'Content-Type: application/json' \
   -d '{"up_ids":["<UP_ID_1>","<UP_ID_2>"]}'
 curl -s http://127.0.0.1:8765/api/up/videos/batch-refresh-progress
+curl -s -X POST http://127.0.0.1:8765/api/up/videos/batch-refresh-cancel
 
 # 读取/保存批量追踪起始日期（保存到应用 config.json）
 curl -s http://127.0.0.1:8765/api/settings/batch-track
@@ -148,6 +150,13 @@ curl -s -X POST http://127.0.0.1:8765/api/up/videos/batch-track-download \
   -H 'Content-Type: application/json' \
   -d '{"up_ids":["<UP_ID_1>","<UP_ID_2>"]}'
 curl -s http://127.0.0.1:8765/api/up/videos/batch-track-download-progress
+curl -s -X POST http://127.0.0.1:8765/api/up/videos/batch-track-download-cancel
+
+# 桌面端口设置会同时返回实际 config.json 路径；保存后下次桌面启动生效
+curl -s http://127.0.0.1:8765/api/settings/desktop
+curl -s -X PUT http://127.0.0.1:8765/api/settings/desktop \
+  -H 'Content-Type: application/json' \
+  -d '{"desktop_port":8765}'
 
 # 删除选中的 UP 登记和视频索引；不会删除 SortedMp4 中的实际视频文件
 curl -s -X POST http://127.0.0.1:8765/api/followings/delete \
@@ -166,6 +175,7 @@ curl -s http://127.0.0.1:8765/api/videos/download-progress
 ```powershell
 curl.exe -s http://127.0.0.1:8765/api/setup-status
 curl.exe -s http://127.0.0.1:8765/api/followings
+curl.exe -s http://127.0.0.1:8765/api/health
 curl.exe -s http://127.0.0.1:8765/api/runtime-status
 curl.exe -s -X POST http://127.0.0.1:8765/api/up-search `
   -H "Content-Type: application/json" `
@@ -178,6 +188,7 @@ curl.exe -s -X POST http://127.0.0.1:8765/api/up/videos/batch-refresh `
   -H "Content-Type: application/json" `
   -d '{"up_ids":["<UP_ID_1>","<UP_ID_2>"]}'
 curl.exe -s http://127.0.0.1:8765/api/up/videos/batch-refresh-progress
+curl.exe -s -X POST http://127.0.0.1:8765/api/up/videos/batch-refresh-cancel
 curl.exe -s http://127.0.0.1:8765/api/settings/batch-track
 curl.exe -s -X PUT http://127.0.0.1:8765/api/settings/batch-track `
   -H "Content-Type: application/json" `
@@ -189,6 +200,11 @@ curl.exe -s -X POST http://127.0.0.1:8765/api/up/videos/batch-track-download `
   -H "Content-Type: application/json" `
   -d '{"up_ids":["<UP_ID_1>","<UP_ID_2>"]}'
 curl.exe -s http://127.0.0.1:8765/api/up/videos/batch-track-download-progress
+curl.exe -s -X POST http://127.0.0.1:8765/api/up/videos/batch-track-download-cancel
+curl.exe -s http://127.0.0.1:8765/api/settings/desktop
+curl.exe -s -X PUT http://127.0.0.1:8765/api/settings/desktop `
+  -H "Content-Type: application/json" `
+  -d '{"desktop_port":8765}'
 curl.exe -s -X POST http://127.0.0.1:8765/api/followings/delete `
   -H "Content-Type: application/json" `
   -d '{"up_ids":["<UP_ID_1>"]}'
@@ -237,6 +253,15 @@ Windows PowerShell：
 ```
 
 所有测试通过，并完成手动验证后，才可将该版本作为待提交版本。
+
+若本次修改涉及桌面入口、配置、打包脚本或 `src-tauri/`，还需运行：
+
+```bash
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml --lib
+```
+
+Windows PowerShell 使用相同命令。安装包必须在对应原生系统另行构建和验收，不能用本节检查替代。
 
 ## 5. 查看当前 UpList 数据
 

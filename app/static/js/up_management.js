@@ -4,11 +4,19 @@
   const emptyStateText = emptyState.querySelector('p');
   const checkAll = document.querySelector('#check-all-ups');
   const batchSyncButton = document.querySelector('#btn-sync');
+  const stopSyncButton = document.querySelector('#btn-stop-sync');
   const deleteButton = document.querySelector('#btn-delete');
+  const deleteDialog = document.querySelector('#delete-dialog');
+  const deleteDialogClose = document.querySelector('#delete-dialog-close');
+  const deleteDialogCancel = document.querySelector('#delete-dialog-cancel');
+  const deleteDialogConfirm = document.querySelector('#delete-dialog-confirm');
+  const deleteDialogMessage = document.querySelector('#delete-dialog-message');
   const batchSyncButtonLabel = batchSyncButton.textContent;
+  const stopSyncButtonLabel = stopSyncButton.textContent;
 
   let rows = [];
   let syncing = false;
+  let pendingDeleteIds = [];
 
   function formatDate(value) {
     if (!value) return '-';
@@ -59,10 +67,15 @@
     deleteButton.disabled = syncing || selectedIds().length === 0;
   }
 
-  function setSyncing(value) {
+  function setSyncing(value, stopAllowed = false) {
     syncing = Boolean(value);
     batchSyncButton.disabled = syncing;
     batchSyncButton.textContent = syncing ? '同步中…' : batchSyncButtonLabel;
+    stopSyncButton.hidden = !syncing || !stopAllowed;
+    if (!syncing) {
+      stopSyncButton.disabled = false;
+      stopSyncButton.textContent = stopSyncButtonLabel;
+    }
     deleteButton.disabled = syncing || selectedIds().length === 0;
     tableBody.querySelectorAll('.btn-sync-row').forEach((button) => {
       button.disabled = syncing;
@@ -127,7 +140,7 @@
         const enabled = trackingCheckbox.checked;
         trackingCheckbox.disabled = true;
         try {
-          const response = await fetch('/api/followings/tracking', {
+          const response = await window.apiFetch('/api/followings/tracking', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ up_id: row.up_id, scheduled_tracking: enabled }),
@@ -155,7 +168,7 @@
 
   async function load() {
     try {
-      const response = await fetch('/api/followings');
+      const response = await window.apiFetch('/api/followings');
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || '无法读取 UP 列表');
       rows = Array.isArray(data) ? data : [];
@@ -179,16 +192,11 @@
     updateCheckAllState();
   });
 
-  deleteButton.addEventListener('click', async () => {
-    const ids = selectedIds();
-    if (!ids.length || syncing) return;
-    const selectedRows = rows.filter((row) => ids.includes(String(row.up_id)));
-    const names = selectedRows.map((row) => row.nickname).join('、');
-    if (!window.confirm(`确定删除选中的 ${ids.length} 个 UP 主登记吗？\n本地视频文件不会被删除。\n${names}`)) return;
-
+  async function deleteSelected(ids) {
     deleteButton.disabled = true;
+    deleteDialogConfirm.disabled = true;
     try {
-      const response = await fetch('/api/followings/delete', {
+      const response = await window.apiFetch('/api/followings/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ up_ids: ids }),
@@ -208,7 +216,34 @@
     } catch (error) {
       document.querySelector('#up-feedback').textContent = error.message;
       updateCheckAllState();
+    } finally {
+      deleteDialogConfirm.disabled = false;
     }
+  }
+
+  function closeDeleteDialog() {
+    pendingDeleteIds = [];
+    if (deleteDialog.open) deleteDialog.close();
+  }
+
+  deleteButton.addEventListener('click', () => {
+    const ids = selectedIds();
+    if (!ids.length || syncing) return;
+    const selectedRows = rows.filter((row) => ids.includes(String(row.up_id)));
+    const names = selectedRows.map((row) => row.nickname).join('、');
+    pendingDeleteIds = ids;
+    deleteDialogMessage.textContent = `确定删除选中的 ${ids.length} 个 UP 主登记吗？${names ? `（${names}）` : ''}`;
+    deleteDialog.showModal();
+  });
+
+  deleteDialogClose.addEventListener('click', closeDeleteDialog);
+  deleteDialogCancel.addEventListener('click', closeDeleteDialog);
+  deleteDialog.addEventListener('cancel', () => { pendingDeleteIds = []; });
+  deleteDialogConfirm.addEventListener('click', async () => {
+    const ids = pendingDeleteIds;
+    if (!ids.length) return;
+    closeDeleteDialog();
+    await deleteSelected(ids);
   });
 
   window.upManagement = {
