@@ -9,6 +9,7 @@ from core.download_files import (
     directory_snapshot,
     expected_video_name,
     find_video_file,
+    fix_hevc_tag,
     remove_partial_files,
     rename_video_artifacts,
     rename_video,
@@ -132,6 +133,7 @@ def _download_one(uid: str, bvid: str) -> None:
         raise OpenCliVideoError(last_error or "OpenCLI 下载完成，但未找到视频文件")
     target = rename_video(source, directory, nickname, uid, title, date)
     rename_video_artifacts(directory, bvid, target)
+    fix_hevc_tag(target)
     ensure_video_cover(bvid, target)
     relative_path = target.relative_to(root).as_posix()
     transcript = _ensure_subtitle(bvid, target)

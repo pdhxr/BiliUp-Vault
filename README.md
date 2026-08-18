@@ -28,22 +28,24 @@ BiliUp 是一个跨 macOS 和 Windows 运行的本地 B 站视频知识库工具
 
 3. Chrome 中的 [OpenCLI 扩展](https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk)。
 4. 在同一个 Chrome 配置中登录 B 站，并保持 Chrome 运行。
-5. `yt-dlp`，视频下载功能依赖它：
+5. `yt-dlp`，视频下载功能依赖它；同时安装 `ffprobe` 和 `ffmpeg`，用于识别 HEVC `hev1` 视频并无损重封装为兼容 QuickTime 的 `hvc1`：
 
    macOS：
 
    ```bash
-   brew install yt-dlp
+   brew install yt-dlp ffmpeg
    ```
 
-   Windows：安装 yt-dlp 官方 Windows 可执行文件，并将所在目录加入 `PATH`。
+   Windows：安装 yt-dlp 和 FFmpeg 的官方 Windows 可执行文件，并将所在目录加入 `PATH`。
 
-安装后可运行以下命令检查 OpenCLI 和 yt-dlp：
+安装后可运行以下命令检查 OpenCLI、yt-dlp、FFprobe 和 FFmpeg：
 
 ```bash
 opencli --version
 opencli doctor
 yt-dlp --version
+ffprobe -version
+ffmpeg -version
 ```
 
 当前源码已使用 OpenCLI `1.8.6` 验证。版本低于 `1.8.6` 时先执行上面的升级命令；OpenCLI 的 Daemon、Extension 和 Connectivity 检查正常后，BiliUp 才能搜索、刷新和下载。BiliUp 会自动查找常见安装位置，并以后台窗口方式调用 OpenCLI。
@@ -143,7 +145,7 @@ Windows 生成 EXE 目录（必须在 Windows 原生环境执行）：
 
 ## 当前限制
 
-- OpenCLI、Node.js、Chrome 扩展、yt-dlp 和 B 站浏览器登录尚未由安装包自动处理。
+- OpenCLI、Node.js、Chrome 扩展、yt-dlp、FFmpeg 和 B 站浏览器登录尚未由安装包自动处理。
 - macOS 包尚未签名、公证。Windows EXE 已在 Windows 11 原生环境完成 PyInstaller 构建与启动冒烟验证；代码签名与 SmartScreen 白名单仍待处理。
 - 第三个页签的单视频下载统一写入 `OtherVideos/`，不会加入 UP 自动追踪列表。
 

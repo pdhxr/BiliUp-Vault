@@ -12,6 +12,7 @@ from core.configuration import (
     set_batch_track_since_date,
 )
 from core.download_progress import progress_rows, set_progress
+from core.download_files import fix_hevc_tag
 from core.followings import save_following
 from core.followings import save_following_and_refresh
 from core.following_delete import delete_followings
@@ -30,7 +31,7 @@ from core.video_reconcile import reconcile_up_videos
 from core.video_sync import refresh_up_videos, refresh_up_videos_with_details
 from core.utils.system.directories import choose_directory, open_directory
 from core.utils.system.resources import resource_path
-from core.utils.system.process import find_opencli, run_opencli
+from core.utils.system.process import find_opencli, run_ffmpeg, run_opencli
 from core.utils.system.network import ServicePortError, available_local_port, prepare_biliup_port, stop_existing_biliup_services
 
 
@@ -182,11 +183,12 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(job["status"], "queued")
         submit.assert_called_once()
 
+    @patch("core.single_video_download.fix_hevc_tag", return_value=False)
     @patch("core.single_video_download.download_subtitle", return_value=False)
     @patch("core.single_video_download.ensure_video_cover")
     @patch("core.single_video_download.download_video")
     @patch("core.single_video_download.knowledge_base_root")
-    def test_single_video_download_saves_metadata_cover(self, configured_root, opencli_download, cover, _subtitle) -> None:
+    def test_single_video_download_saves_metadata_cover(self, configured_root, opencli_download, cover, _subtitle, fix_tag) -> None:
         library_root = self.root / "library"
         configured_root.return_value = library_root
 
@@ -212,6 +214,8 @@ class CoreTests(unittest.TestCase):
         row = json.loads((library_root / "OtherVideos/videos.jsonl").read_text(encoding="utf-8"))
         self.assertTrue(row["cover"])
         cover.assert_called_once()
+        fixed_path = library_root / "OtherVideos/示例 UP_20260810_视频.mp4"
+        fix_tag.assert_called_once_with(fixed_path)
 
     def test_source_resource_path_is_relative(self) -> None:
         self.assertEqual(resource_path("app/static"), Path("app/static"))
@@ -477,10 +481,114 @@ class CoreTests(unittest.TestCase):
     def test_download_quality_prefers_low_resolution_with_safe_fallbacks(self) -> None:
         self.assertEqual(DOWNLOAD_QUALITY_FALLBACKS, ("480p", "720p", "1080p", "best"))
 
+    @patch("core.download_files.run_ffmpeg")
+    @patch("core.download_files.run_ffprobe")
+    def test_fix_hevc_tag_replaces_mp4_after_successful_stream_copy(self, run_ffprobe, run_ffmpeg) -> None:
+        video = self.root / "video.mp4"
+        video.parent.mkdir(parents=True, exist_ok=True)
+        video.write_bytes(b"original")
+        run_ffprobe.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=b'{"streams":[{"codec_name":"hevc","codec_tag_string":"hev1"}]}', stderr=b""
+        )
+
+        def successful_remux(arguments: list[str], *, timeout: int):
+            Path(arguments[-1]).write_bytes(b"remuxed")
+            return subprocess.CompletedProcess(arguments, 0, stdout=b"", stderr=b"")
+
+        run_ffmpeg.side_effect = successful_remux
+        self.assertTrue(fix_hevc_tag(video))
+        self.assertEqual(video.read_bytes(), b"remuxed")
+        arguments = run_ffmpeg.call_args.args[0]
+        self.assertEqual(arguments[arguments.index("-c") + 1], "copy")
+        self.assertEqual(arguments[arguments.index("-tag:v") + 1], "hvc1")
+
+    @patch("core.download_files.run_ffmpeg")
+    @patch("core.download_files.run_ffprobe")
+    def test_fix_hevc_tag_failure_preserves_original_and_removes_temporary(self, run_ffprobe, run_ffmpeg) -> None:
+        video = self.root / "video.mp4"
+        video.parent.mkdir(parents=True, exist_ok=True)
+        video.write_bytes(b"original")
+        run_ffprobe.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=b'{"streams":[{"codec_name":"hevc","codec_tag_string":"hev1"}]}', stderr=b""
+        )
+
+        def failed_remux(arguments: list[str], *, timeout: int):
+            Path(arguments[-1]).write_bytes(b"invalid")
+            return subprocess.CompletedProcess(arguments, 1, stdout=b"", stderr=b"failed")
+
+        run_ffmpeg.side_effect = failed_remux
+        self.assertFalse(fix_hevc_tag(video))
+        self.assertEqual(video.read_bytes(), b"original")
+        self.assertFalse(video.with_suffix(".tmp.mp4").exists())
+
+    @patch("core.download_files.run_ffmpeg", side_effect=FileNotFoundError("ffmpeg"))
+    @patch("core.download_files.run_ffprobe")
+    def test_fix_hevc_tag_missing_ffmpeg_does_not_raise(self, run_ffprobe, _run_ffmpeg) -> None:
+        video = self.root / "video.mp4"
+        video.parent.mkdir(parents=True, exist_ok=True)
+        video.write_bytes(b"original")
+        run_ffprobe.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=b'{"streams":[{"codec_name":"hevc","codec_tag_string":"hev1"}]}', stderr=b""
+        )
+        self.assertFalse(fix_hevc_tag(video))
+        self.assertEqual(video.read_bytes(), b"original")
+
+    @patch("core.download_files.run_ffmpeg")
+    @patch("core.download_files.run_ffprobe")
+    def test_fix_hevc_tag_rejects_missing_output_file(self, run_ffprobe, run_ffmpeg) -> None:
+        video = self.root / "video.mp4"
+        video.parent.mkdir(parents=True, exist_ok=True)
+        video.write_bytes(b"original")
+        run_ffprobe.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=b'{"streams":[{"codec_name":"hevc","codec_tag_string":"hev1"}]}', stderr=b""
+        )
+        run_ffmpeg.return_value = subprocess.CompletedProcess([], 0, stdout=b"", stderr=b"")
+        self.assertFalse(fix_hevc_tag(video))
+        self.assertEqual(video.read_bytes(), b"original")
+
+    @patch("core.download_files.run_ffmpeg")
+    @patch("core.download_files.run_ffprobe")
+    def test_fix_hevc_tag_skips_non_mp4(self, run_ffprobe, run_ffmpeg) -> None:
+        video = self.root / "video.webm"
+        video.parent.mkdir(parents=True, exist_ok=True)
+        video.write_bytes(b"video")
+        self.assertFalse(fix_hevc_tag(video))
+        run_ffprobe.assert_not_called()
+        run_ffmpeg.assert_not_called()
+
+    @patch("core.download_files.run_ffmpeg")
+    @patch("core.download_files.run_ffprobe")
+    def test_fix_hevc_tag_only_remuxes_hevc_with_hev1_tag(self, run_ffprobe, run_ffmpeg) -> None:
+        video = self.root / "video.mp4"
+        video.parent.mkdir(parents=True, exist_ok=True)
+        video.write_bytes(b"original")
+        for codec_name, codec_tag in (("h264", "avc1"), ("hevc", "hvc1")):
+            with self.subTest(codec_name=codec_name, codec_tag=codec_tag):
+                run_ffprobe.return_value = subprocess.CompletedProcess(
+                    [],
+                    0,
+                    stdout=json.dumps({"streams": [{"codec_name": codec_name, "codec_tag_string": codec_tag}]}).encode(),
+                    stderr=b"",
+                )
+                self.assertFalse(fix_hevc_tag(video))
+        run_ffmpeg.assert_not_called()
+
+    @patch("core.utils.system.process.subprocess.run")
+    @patch("core.utils.system.process.shutil.which", return_value="C:/ffmpeg/bin/ffmpeg.exe")
+    def test_ffmpeg_uses_no_window_flag_on_windows(self, _which, run) -> None:
+        run.return_value = subprocess.CompletedProcess([], 0, stdout=b"", stderr=b"")
+        with (
+            patch("core.utils.system.process.os.name", "nt"),
+            patch.object(subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True),
+        ):
+            run_ffmpeg(["-version"], timeout=5)
+        self.assertEqual(run.call_args.kwargs["creationflags"], 0x08000000)
+
+    @patch("core.video_download.fix_hevc_tag", return_value=False)
     @patch("core.video_download._ensure_subtitle", return_value=False)
     @patch("core.video_download.download_video")
     @patch("core.video_download.knowledge_base_root")
-    def test_single_download_retries_and_accepts_generated_file(self, configured_root, opencli_download, _subtitle) -> None:
+    def test_single_download_retries_and_accepts_generated_file(self, configured_root, opencli_download, _subtitle, fix_tag) -> None:
         library_root = self.root / "library"
         save("123", "示例 UP", "简介", library_root / "UpList")
         merge_videos(
@@ -516,6 +624,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(local_row["original_filename"], local_path.name)
         self.assertEqual(opencli_download.call_args_list[0].kwargs["quality"], "480p")
         self.assertEqual(opencli_download.call_args_list[1].kwargs["quality"], "720p")
+        fix_tag.assert_called_once_with(local_path)
 
     @patch("core.opencli_videos.run_opencli")
     def test_download_reports_opencli_result_failure(self, run) -> None:

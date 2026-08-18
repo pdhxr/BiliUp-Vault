@@ -36,7 +36,7 @@
 - `core/subtitle_download.py`：调用 OpenCLI 获取字幕、写入 `__transcript.md` sidecar，并同步远端追踪清单和本地视频索引；单次 OpenCLI 错误自动重试一次，仍失败不阻断视频下载。
 - `core/cover_download.py`：从标准化视频元数据取得封面 URL，只允许 B 站图片 CDN，按镜像重试、校验图片内容并原子写入 `<视频主名>_cover.<扩展名>`；失败不阻断视频下载。
 - `core/video_cover_backfill.py`：筛选追踪起始日期之后已下载但缺少封面的 UP 视频，复用 `core/cover_download.py` 的统一接口逐一补齐，并刷新本地与远端索引；不设数量上限，不重新下载视频。
-- `core/download_files.py`：识别 OpenCLI 生成的视频文件、清理 `.part` 临时文件和执行跨平台安全命名；不包含 HTTP 或 OpenCLI 调用。
+- `core/download_files.py`：识别 OpenCLI 生成的视频文件、清理 `.part` 临时文件、执行跨平台安全命名，并在新下载 MP4 重命名后探测首个视频轨道，仅将 `codec_name=hevc` 且 `codec_tag_string=hev1` 的文件无损重封装为 `hvc1` 标签；不包含 HTTP 或 OpenCLI 调用。
 - `core/download_progress.py`：下载状态存储、过期记录清理和下载目录大小监测，不包含 OpenCLI 或 HTTP 逻辑。
 - `core/repositories/videos.py`：读写 `<knowledge_base_root>/UpList/<UP名称>.jsonl` 远端追踪清单。
 - `core/repositories/library.py`：读写 `<knowledge_base_root>/SortedMp4/<UP名称>/videos.jsonl` 和 `<knowledge_base_root>/OtherVideos/videos.jsonl` 本地视频库索引；持久化格式与参考项目一致。
@@ -64,7 +64,7 @@
 
 批量追踪并下载：WebUI 读取配置中的起始日期，并把 UP 主管理页签“自动追踪下载”列已勾选的全部 UP 组成 `up_ids`；左侧主复选框不参与此功能。随后调用 `POST /api/up/videos/batch-track-download` → `core/video_batch_track_download.py`。该模块后台串行调用 `core/video_sync.py` 的截止日期分页刷新，收集每个 UP 的新视频并更新远端追踪清单；随后从完整视频列表筛选日期不早于起始日期且 `downloaded=false` 的视频（包含之前已登记但尚未下载的视频），交给 `core/video_download.py` 的下载队列。下载结束后，`core/video_cover_backfill.py` 对期限内所有已下载但缺少封面的本地 MP4 逐一调用既有封面接口，不设数量上限。WebUI 轮询 `tracking`、`downloading`、`covering` 三阶段状态及各自进度。
 
-视频下载：WebUI → `POST /api/videos/download` → FastAPI videos route → `core/video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`。UP 视频与单视频下载共用 `core/opencli_videos.py` 定义的 `480p`、`720p`、`1080p`、`best` 低到高回退顺序，优先节省存储，并依据实际生成的视频文件确认成功；`core/download_files.py` 先规范化 OpenCLI 遗留附件，`core/cover_download.py` 再按需补查元数据并从受限 CDN 下载封面。接着由 `core/subtitle_download.py` 尝试查询并写入相邻 `__transcript.md`，再由 core 同步更新两套视频索引和 `followings.json`。封面或字幕失败不改变视频任务的成功状态。
+视频下载：WebUI → `POST /api/videos/download` → FastAPI videos route → `core/video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/SortedMp4/<UP名称>/<YYYYMM>/`。UP 视频与单视频下载共用 `core/opencli_videos.py` 定义的 `480p`、`720p`、`1080p`、`best` 低到高回退顺序，优先节省存储，并依据实际生成的视频文件确认成功；`core/download_files.py` 先规范化 OpenCLI 遗留附件，再用 FFprobe 检查新下载 MP4，仅对 HEVC `hev1` 文件使用 FFmpeg `-c copy -tag:v hvc1` 无损重封装，`core/cover_download.py` 随后按需补查元数据并从受限 CDN 下载封面。接着由 `core/subtitle_download.py` 尝试查询并写入相邻 `__transcript.md`，再由 core 同步更新两套视频索引和 `followings.json`。兼容探测或修复、封面或字幕失败不改变视频任务的成功状态。
 
 单视频下载：WebUI → `POST /api/single-video/download` → `core/single_video_download.py` → `core/opencli_videos.py` → `<knowledge_base_root>/OtherVideos/`。任务不写入 `UpList`；同一视频已有有效文件时复用本地索引并补充缺失的字幕或封面，不重复下载视频。它与 UP 视频列表下载共用 `core/subtitle_download.py` 和 `core/cover_download.py`。
 

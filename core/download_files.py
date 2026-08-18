@@ -1,8 +1,10 @@
 """下载文件的发现、临时文件清理和命名操作。"""
 
+import json
 from pathlib import Path
 
 from core.repositories.videos import safe_video_directory_name
+from core.utils.system.process import run_ffmpeg, run_ffprobe
 
 
 VIDEO_SUFFIXES = {".mp4", ".mkv", ".flv", ".webm"}
@@ -78,6 +80,55 @@ def rename_video(source: Path, directory: Path, nickname: str, uid: str, title: 
         return target
     source.replace(target)
     return target
+
+
+def fix_hevc_tag(video_path: Path) -> bool:
+    """Remux an MP4 with an ``hvc1`` video tag for QuickTime compatibility."""
+    if video_path.suffix.lower() != ".mp4":
+        return False
+    temporary = video_path.with_suffix(".tmp.mp4")
+    try:
+        probe = run_ffprobe(
+            [
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name,codec_tag_string",
+                "-of", "json",
+                str(video_path),
+            ],
+            timeout=30,
+        )
+        if probe.returncode != 0:
+            return False
+        streams = json.loads(probe.stdout.decode("utf-8")).get("streams", [])
+        if not streams or not isinstance(streams[0], dict):
+            return False
+        codec_name = str(streams[0].get("codec_name", "")).lower()
+        codec_tag = str(streams[0].get("codec_tag_string", "")).lower()
+        if codec_name != "hevc" or codec_tag != "hev1":
+            return False
+        temporary.unlink(missing_ok=True)
+        result = run_ffmpeg(
+            [
+                "-y",
+                "-i", str(video_path),
+                "-c", "copy",
+                "-tag:v", "hvc1",
+                str(temporary),
+            ],
+            timeout=3600,
+        )
+        if result.returncode != 0 or not temporary.is_file() or temporary.stat().st_size <= 0:
+            return False
+        temporary.replace(video_path)
+        return True
+    except Exception:
+        return False
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def rename_video_artifacts(directory: Path, bvid: str, video_path: Path) -> None:

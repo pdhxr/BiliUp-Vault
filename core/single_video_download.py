@@ -12,7 +12,7 @@ from threading import Event
 
 from core.configuration import knowledge_base_root
 from core.cover_download import ensure_video_cover
-from core.download_files import directory_snapshot, find_video_file, has_cover_image, remove_partial_files, rename_video, rename_video_artifacts
+from core.download_files import directory_snapshot, find_video_file, fix_hevc_tag, has_cover_image, remove_partial_files, rename_video, rename_video_artifacts
 from core.download_progress import get_progress, now_iso, set_progress, watch_download_size
 from core.opencli_videos import DOWNLOAD_QUALITY_FALLBACKS, OpenCliVideoError, download_video, fetch_video_metadata
 from core.repositories.library import find_other_video, record_other_download
@@ -83,6 +83,7 @@ def _run_job(metadata: dict[str, str]) -> None:
             raise OpenCliVideoError(last_error or "OpenCLI 下载完成，但未找到视频文件")
         target = rename_video(source, directory, nickname, "single-video", title, date)
         rename_video_artifacts(directory, bvid, target)
+        fix_hevc_tag(target)
         ensure_video_cover(bvid, target, metadata.get("thumbnail", ""))
         transcript = download_subtitle(bvid, target)
         entry = record_other_download(

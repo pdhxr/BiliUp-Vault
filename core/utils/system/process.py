@@ -67,3 +67,27 @@ def run_opencli(arguments: list[str], timeout: int) -> subprocess.CompletedProce
         env=_process_environment(executable),
         **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
     )
+
+
+def _run_media_tool(name: str, arguments: list[str], timeout: int) -> subprocess.CompletedProcess[bytes]:
+    executable = shutil.which(name)
+    if not executable:
+        raise FileNotFoundError(name)
+    return subprocess.run(
+        [executable, *arguments],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+        **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+    )
+
+
+def run_ffmpeg(arguments: list[str], timeout: int) -> subprocess.CompletedProcess[bytes]:
+    """Run FFmpeg without opening a console window on Windows."""
+    return _run_media_tool("ffmpeg", arguments, timeout)
+
+
+def run_ffprobe(arguments: list[str], timeout: int) -> subprocess.CompletedProcess[bytes]:
+    """Run FFprobe without opening a console window on Windows."""
+    return _run_media_tool("ffprobe", arguments, timeout)
