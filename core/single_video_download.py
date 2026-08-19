@@ -77,7 +77,12 @@ def _run_job(metadata: dict[str, str]) -> None:
         last_error = ""
         try:
             if platform == "douyin":
-                download_douyin_video(metadata["source_url"], directory)
+                download_douyin_video(
+                    metadata["source_url"],
+                    directory,
+                    media_url=metadata.get("media_url", ""),
+                    video_id=bvid,
+                )
                 source = find_video_file(directory, bvid, before)
                 if source is None:
                     last_error = "yt-dlp 下载完成，但未找到抖音视频文件"

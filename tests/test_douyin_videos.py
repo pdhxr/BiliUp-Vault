@@ -1,8 +1,10 @@
+import subprocess
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from core.douyin_videos import _raw_cover_from_aweme, download_douyin_cover, remove_douyin_horizontal_cover
+from core.douyin_videos import _browser_metadata, _download_direct_video, _raw_cover_from_aweme, download_douyin_cover, remove_douyin_horizontal_cover
+from core.utils.system.browser import dump_webpage_with_browser
 
 
 class _Response:
@@ -84,6 +86,54 @@ class DouyinCoverTests(unittest.TestCase):
         remove_douyin_horizontal_cover(self.video)
 
         self.assertFalse(old_horizontal.exists())
+
+    @patch("core.douyin_videos.dump_webpage_with_browser")
+    def test_browser_fallback_extracts_public_page_metadata(self, dump_page) -> None:
+        dump_page.return_value = """
+            <html><head>
+              <title>页面视频标题 - 抖音</title>
+              <meta name="description" content="页面视频标题 - 页面作者于20260820发布在抖音，来抖音！">
+              <meta name="lark:url:video_cover_image_url" content="https://p3-sign.douyinpic.com/cover.jpeg?a=1&amp;b=2">
+            </head><body><script>window.state={"aweme_id":"739000009"};</script>
+            <video><source src="https://v26-web.douyinvod.com/video.mp4?a=1&amp;b=2"></video></body></html>
+        """
+        metadata = _browser_metadata("https://v.douyin.com/example/")
+        self.assertEqual(metadata["video_id"], "739000009")
+        self.assertEqual(metadata["title"], "页面视频标题")
+        self.assertEqual(metadata["nickname"], "页面作者")
+        self.assertEqual(metadata["publish_time"], "20260820")
+        self.assertEqual(metadata["media_url"], "https://v26-web.douyinvod.com/video.mp4?a=1&b=2")
+
+    @patch("core.douyin_videos.urlopen")
+    def test_direct_browser_media_download_is_atomic(self, open_url) -> None:
+        response = MagicMock()
+        response.headers = {"Content-Type": "video/mp4"}
+        response.read.side_effect = [b"video-data", b""]
+        response.__enter__.return_value = response
+        open_url.return_value = response
+        target = _download_direct_video(
+            "https://v26-web.douyinvod.com/video.mp4?__vid=739000009",
+            "739000009",
+            self.root,
+        )
+        self.assertEqual(Path(target).read_bytes(), b"video-data")
+        self.assertFalse((self.root / "739000009.mp4.part").exists())
+
+    @patch("core.utils.system.browser._run_managed")
+    @patch("core.utils.system.browser.find_headless_browser", return_value=Path("C:/Chrome/chrome.exe"))
+    @patch("core.utils.system.browser.platform.system", return_value="Windows")
+    def test_isolated_browser_timeout_has_actionable_error(self, _system, _find, run) -> None:
+        run.side_effect = subprocess.TimeoutExpired(["chrome"], 45)
+
+        with self.assertRaisesRegex(RuntimeError, "隔离浏览器访问页面超时"):
+            dump_webpage_with_browser("https://www.douyin.com/video/739000009")
+
+    @patch("core.utils.system.browser._run_managed")
+    @patch("core.utils.system.browser.platform.system", return_value="Darwin")
+    def test_macos_does_not_start_isolated_browser_fallback(self, _system, run) -> None:
+        with self.assertRaisesRegex(RuntimeError, "当前系统不启用隔离浏览器回退"):
+            dump_webpage_with_browser("https://www.douyin.com/video/739000009")
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ from core.configuration import (
 )
 from core.download_progress import progress_rows, set_progress
 from core.download_files import fix_hevc_tag
-from core.douyin_videos import extract_douyin_author, extract_douyin_reference, fetch_douyin_metadata
+from core.douyin_videos import _run_with_browser_fallback, extract_douyin_author, extract_douyin_reference, fetch_douyin_metadata
 from core.followings import save_following
 from core.followings import save_following_and_refresh
 from core.following_delete import delete_followings
@@ -35,8 +35,13 @@ from core.video_cover_backfill import backfill_covers_for_up
 from core.video_reconcile import reconcile_up_videos
 from core.video_sync import refresh_up_videos, refresh_up_videos_with_details
 from core.utils.system.directories import application_config_directory, choose_directory, open_directory
+from core.utils.system.browser import (
+    _headless_browser_candidates,
+    browser_cookie_sources,
+    isolated_browser_fallback_supported,
+)
 from core.utils.system.resources import resource_path
-from core.utils.system.process import ProcessCancelledError, find_opencli, run_ffmpeg, run_opencli
+from core.utils.system.process import ProcessCancelledError, find_opencli, find_yt_dlp, run_ffmpeg, run_opencli, run_yt_dlp
 from core.utils.system.network import ServicePortError, available_local_port, prepare_biliup_port, stop_existing_biliup_services
 
 
@@ -174,6 +179,14 @@ class CoreTests(unittest.TestCase):
         reference = extract_douyin_reference("复制打开抖音，看看作品 https://v.douyin.com/AbCd123/ 其他文字")
         self.assertEqual(reference, "https://v.douyin.com/AbCd123/")
 
+    def test_extracts_douyin_url_without_protocol(self) -> None:
+        reference = extract_douyin_reference("复制打开抖音 v.douyin.com/AbCd123/ 看看作品")
+        self.assertEqual(reference, "https://v.douyin.com/AbCd123/")
+
+    def test_extracts_legacy_iesdouyin_share_url(self) -> None:
+        reference = extract_douyin_reference("https://www.iesdouyin.com/share/video/739000001/?region=CN。")
+        self.assertEqual(reference, "https://www.iesdouyin.com/share/video/739000001/?region=CN")
+
     def test_extracts_douyin_author_from_featured_share_text(self) -> None:
         first = "7.17 【抖音精选】点击链接or复制打开app，看看【老傅1024的作品】一切皆插件：拆解 Harness 背后的 Cord... https://v.douyin.com/HO0UXqnDpHM/ H@v.sr :5pm 11/19 Gvf:/"
         second = "1.51 【抖音精选】点击链接or复制打开app，看看【敲代码的小虾米的作品】Vibe Coding一个桌面应用的技术路线 # ... https://v.douyin.com/0-prm5iSaN4/ :1pm 08/05 ndN:/ N@w.sR"
@@ -210,6 +223,51 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(metadata["horizontal_thumbnail"], "https://p3-sign.douyinpic.com/raw-cover.jpeg")
         raw_cover.assert_called_once_with("https://www.douyin.com/video/739000001")
         self.assertNotIn("--cookies-from-browser", run.call_args.args[0])
+
+    @patch("core.douyin_videos.run_yt_dlp")
+    def test_douyin_cookie_fallback_tries_edge_after_locked_chrome(self, run) -> None:
+        run.side_effect = [
+            subprocess.CompletedProcess([], 1, stdout="", stderr="Fresh cookies are needed"),
+            subprocess.CompletedProcess([], 1, stdout="", stderr="ERROR: Could not copy Chrome cookie database"),
+            subprocess.CompletedProcess([], 0, stdout='{"id":"1"}', stderr=""),
+        ]
+        with (
+            patch("core.douyin_videos.browser_cookie_sources", return_value=("chrome", "edge", "firefox")),
+            patch("core.douyin_videos.isolated_browser_fallback_supported", return_value=True),
+        ):
+            result = _run_with_browser_fallback(["--dump-single-json", "https://v.douyin.com/example/"], timeout=10)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(run.call_args_list[2].args[0][:2], ["--cookies-from-browser", "edge"])
+
+    @patch("core.douyin_videos.run_yt_dlp")
+    def test_douyin_locked_chrome_error_has_actionable_message(self, run) -> None:
+        run.side_effect = [
+            subprocess.CompletedProcess([], 1, stdout="", stderr="Fresh cookies are needed"),
+            subprocess.CompletedProcess([], 1, stdout="", stderr="ERROR: Could not copy Chrome cookie database"),
+            subprocess.CompletedProcess([], 1, stdout="", stderr="Edge cookies unavailable"),
+            subprocess.CompletedProcess([], 1, stdout="", stderr="Firefox cookies unavailable"),
+        ]
+        with (
+            patch("core.douyin_videos.browser_cookie_sources", return_value=("chrome", "edge", "firefox")),
+            patch("core.douyin_videos.isolated_browser_fallback_supported", return_value=True),
+        ):
+            result = _run_with_browser_fallback(["--dump-single-json", "https://v.douyin.com/example/"], timeout=10)
+        self.assertIn("完全退出 Chrome", result.stderr)
+
+    @patch("core.douyin_videos.run_yt_dlp")
+    def test_douyin_macos_cookie_fallback_only_tries_chrome(self, run) -> None:
+        run.side_effect = [
+            subprocess.CompletedProcess([], 1, stdout="", stderr="Fresh cookies are needed"),
+            subprocess.CompletedProcess([], 1, stdout="", stderr="Chrome cookies unavailable"),
+        ]
+        with (
+            patch("core.douyin_videos.browser_cookie_sources", return_value=("chrome",)),
+            patch("core.douyin_videos.isolated_browser_fallback_supported", return_value=False),
+        ):
+            result = _run_with_browser_fallback(["--dump-single-json", "https://v.douyin.com/example/"], timeout=10)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[1].args[0][:2], ["--cookies-from-browser", "chrome"])
 
     def test_other_video_record_uses_dedicated_index(self) -> None:
         library_root = self.root / "library"
@@ -349,7 +407,15 @@ class CoreTests(unittest.TestCase):
         library_root = self.root / "library"
         configured_root.return_value = library_root
 
-        def fake_download(_reference: str, output_directory: Path) -> str:
+        def fake_download(
+            _reference: str,
+            output_directory: Path,
+            *,
+            media_url: str = "",
+            video_id: str = "",
+        ) -> str:
+            self.assertEqual(media_url, "")
+            self.assertEqual(video_id, "739000003")
             (output_directory / "739000003.mp4").write_bytes(b"video")
             return "downloaded"
 
@@ -404,6 +470,37 @@ class CoreTests(unittest.TestCase):
         executable.write_text("", encoding="utf-8")
         candidates.return_value = [executable]
         self.assertEqual(find_opencli(), executable)
+
+    @patch("core.utils.system.process.shutil.which", return_value=None)
+    @patch("core.utils.system.process._yt_dlp_candidate_paths")
+    def test_finds_yt_dlp_outside_process_path(self, candidates, _which) -> None:
+        executable = self.root / "npm" / "yt-dlp.exe"
+        executable.parent.mkdir(parents=True)
+        executable.write_bytes(b"launcher")
+        candidates.return_value = [executable]
+        self.assertEqual(find_yt_dlp(), executable)
+
+    def test_browser_fallback_configuration_is_platform_specific(self) -> None:
+        with patch("core.utils.system.browser.platform.system", return_value="Windows"):
+            windows = _headless_browser_candidates()
+            self.assertEqual(browser_cookie_sources(), ("chrome", "edge", "firefox"))
+            self.assertTrue(isolated_browser_fallback_supported())
+        with patch("core.utils.system.browser.platform.system", return_value="Darwin"):
+            macos = _headless_browser_candidates()
+            self.assertEqual(browser_cookie_sources(), ("chrome",))
+            self.assertFalse(isolated_browser_fallback_supported())
+        self.assertTrue(any(path.name == "chrome.exe" for path in windows))
+        self.assertEqual(macos, [])
+
+    @patch("core.utils.system.process._run_managed")
+    @patch("core.utils.system.process.find_yt_dlp", return_value=Path("C:/npm/yt-dlp.cmd"))
+    def test_runs_windows_yt_dlp_command_shim(self, _find, run) -> None:
+        with (
+            patch("core.utils.system.process.os.name", "nt"),
+            patch.dict("core.utils.system.process.os.environ", {"COMSPEC": "cmd.exe"}),
+        ):
+            run_yt_dlp(["--version"], 10)
+        self.assertEqual(run.call_args.args[0], ["cmd.exe", "/d", "/c", str(Path("C:/npm/yt-dlp.cmd")), "--version"])
 
     @patch("core.utils.system.process.subprocess.Popen")
     @patch("core.utils.system.process.find_opencli", return_value=Path("tmp/bin/opencli"))

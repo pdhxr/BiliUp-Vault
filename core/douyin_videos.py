@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+from html.parser import HTMLParser
+import html
 import json
 import os
 from pathlib import Path
@@ -14,6 +16,11 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from core.download_files import COVER_SUFFIXES
+from core.utils.system.browser import (
+    browser_cookie_sources,
+    dump_webpage_with_browser,
+    isolated_browser_fallback_supported,
+)
 from core.utils.system.process import run_yt_dlp
 
 
@@ -22,19 +29,88 @@ class DouyinVideoError(RuntimeError):
 
 
 _DOUYIN_URL = re.compile(
-    r"https?://(?:v\.douyin\.com|(?:www\.)?douyin\.com)/[^\s<>\"']+",
+    r"(?:https?://)?(?:v\.douyin\.com|(?:www\.)?douyin\.com|(?:www\.)?iesdouyin\.com)/[^\s<>\"']+",
     re.IGNORECASE,
 )
 _DOUYIN_AUTHOR = re.compile(r"【\s*([^【】]+?)\s*的作品\s*】")
 _TRAILING_PUNCTUATION = "，。！？；：、,.!?;:)]}）】》>"
 _COVER_HOST_SUFFIXES = ("douyinpic.com", "byteimg.com")
 _MAX_COVER_BYTES = 10 * 1024 * 1024
+_DIRECT_VIDEO_HOST_SUFFIXES = ("douyinvod.com",)
+
+
+class _DouyinPageParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.meta: dict[str, str] = {}
+        self.sources: list[str] = []
+        self._in_title = False
+        self.title_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {str(key).lower(): str(value or "") for key, value in attrs}
+        if tag.lower() == "meta":
+            name = values.get("name") or values.get("property")
+            if name and values.get("content"):
+                self.meta[name.lower()] = values["content"]
+        elif tag.lower() == "source" and values.get("src"):
+            self.sources.append(values["src"])
+        elif tag.lower() == "title":
+            self._in_title = True
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "title":
+            self._in_title = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self.title_parts.append(data)
+
+
+def _allowed_direct_video_url(value: str) -> bool:
+    parsed = urlparse(str(value or "").strip())
+    host = str(parsed.hostname or "").lower()
+    return parsed.scheme == "https" and (
+        any(host == suffix or host.endswith(f".{suffix}") for suffix in _DIRECT_VIDEO_HOST_SUFFIXES)
+        or (host in {"douyin.com", "www.douyin.com"} and parsed.path.startswith("/aweme/v1/play/"))
+    )
+
+
+def _browser_metadata(reference: str) -> dict[str, str]:
+    webpage = dump_webpage_with_browser(reference, timeout=75)
+    parser = _DouyinPageParser()
+    parser.feed(webpage)
+    media_url = next((html.unescape(url) for url in parser.sources if _allowed_direct_video_url(url)), "")
+    video_id_match = re.search(r"(?:[?&]__vid=|/video/)(\d{8,})", media_url or reference)
+    if not video_id_match:
+        video_id_match = re.search(r"(?:aweme_id|awemeId)[^0-9]{0,20}(\d{8,})", webpage)
+    title = "".join(parser.title_parts).strip()
+    if title.endswith(" - 抖音"):
+        title = title[:-5].strip()
+    description = parser.meta.get("description", "")
+    author_date = re.search(r" - (.+?)于(\d{8})发布在抖音", description)
+    if not media_url or not video_id_match or not title:
+        raise DouyinVideoError("独立浏览器未能读取完整的抖音视频信息")
+    return {
+        "platform": "douyin",
+        "video_id": video_id_match.group(1),
+        "title": title,
+        "nickname": author_date.group(1).strip() if author_date else "抖音视频",
+        "publish_time": author_date.group(2) if author_date else datetime.now().strftime("%Y%m%d"),
+        "thumbnail": parser.meta.get("lark:url:video_cover_image_url", ""),
+        "horizontal_thumbnail": "",
+        "source_url": reference,
+        "media_url": media_url,
+    }
 
 
 def extract_douyin_reference(value: str) -> str:
     """从分享文本或纯链接中提取抖音链接。"""
     match = _DOUYIN_URL.search(str(value or "").strip())
-    return match.group(0).rstrip(_TRAILING_PUNCTUATION) if match else ""
+    if not match:
+        return ""
+    reference = match.group(0).rstrip(_TRAILING_PUNCTUATION)
+    return reference if reference.lower().startswith(("http://", "https://")) else f"https://{reference}"
 
 
 def extract_douyin_author(value: str) -> str:
@@ -53,14 +129,33 @@ def _failure_detail(result: subprocess.CompletedProcess[str]) -> str:
 
 
 def _run_with_browser_fallback(arguments: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
-    """优先读取公开页面，失败后复用本机 Chrome 会话重试。"""
+    """优先读取公开页面，失败后依次复用本机浏览器会话重试。"""
     last_result: subprocess.CompletedProcess[str] | None = None
-    for browser_arguments in ([], ["--cookies-from-browser", "chrome"]):
+    chrome_cookie_locked = False
+    attempts = [[]]
+    attempts.extend(["--cookies-from-browser", browser] for browser in browser_cookie_sources())
+    for browser_arguments in attempts:
         result = run_yt_dlp([*browser_arguments, *arguments], timeout=timeout)
         if result.returncode == 0:
             return result
+        if browser_arguments and browser_arguments[-1] == "chrome":
+            detail = f"{result.stderr or ''}\n{result.stdout or ''}".lower()
+            chrome_cookie_locked = (
+                isolated_browser_fallback_supported()
+                and "could not copy chrome cookie database" in detail
+            )
         last_result = result
     assert last_result is not None
+    if chrome_cookie_locked:
+        return subprocess.CompletedProcess(
+            last_result.args,
+            last_result.returncode,
+            stdout=last_result.stdout,
+            stderr=(
+                "Windows 上 Chrome 正在占用 Cookie 数据库。请完全退出 Chrome（包括后台进程）后重试；"
+                "应用也已自动尝试 Edge 和 Firefox，但未能获取可用的抖音 Cookie。"
+            ),
+        )
     return last_result
 
 
@@ -157,7 +252,12 @@ def fetch_douyin_metadata(reference: str) -> dict[str, str]:
     except subprocess.TimeoutExpired as exc:
         raise DouyinVideoError("抖音视频信息获取超时，请重试") from exc
     if result.returncode != 0:
-        raise DouyinVideoError(f"抖音视频信息获取失败：{_failure_detail(result)}")
+        try:
+            return _browser_metadata(reference)
+        except (FileNotFoundError, OSError, RuntimeError, DouyinVideoError) as browser_exc:
+            raise DouyinVideoError(
+                f"抖音视频信息获取失败：{_failure_detail(result)}；独立浏览器回退失败：{browser_exc}"
+            ) from browser_exc
     try:
         data = json.loads(result.stdout)
     except (json.JSONDecodeError, TypeError) as exc:
@@ -183,8 +283,38 @@ def fetch_douyin_metadata(reference: str) -> dict[str, str]:
     }
 
 
-def download_douyin_video(reference: str, output_directory: Path) -> str:
+def _download_direct_video(media_url: str, video_id: str, output_directory: Path) -> str:
+    if not _allowed_direct_video_url(media_url):
+        raise DouyinVideoError("抖音页面返回了不受信任的视频地址")
+    target = output_directory / f"{video_id}.mp4"
+    temporary = output_directory / f"{video_id}.mp4.part"
+    request = Request(media_url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.douyin.com/"})
+    try:
+        with urlopen(request, timeout=30) as response, temporary.open("wb") as output:
+            content_type = str(response.headers.get("Content-Type", "")).lower()
+            if "video" not in content_type and "octet-stream" not in content_type:
+                raise DouyinVideoError("抖音媒体地址未返回视频内容")
+            while chunk := response.read(1024 * 1024):
+                output.write(chunk)
+        if temporary.stat().st_size <= 0:
+            raise DouyinVideoError("抖音视频内容为空")
+        os.replace(temporary, target)
+        return str(target)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def download_douyin_video(
+    reference: str,
+    output_directory: Path,
+    *,
+    media_url: str = "",
+    video_id: str = "",
+) -> str:
     """下载单条抖音视频，不让 yt-dlp 自动选择封面，也不请求字幕。"""
+    if media_url and video_id:
+        return _download_direct_video(media_url, video_id, output_directory)
     output_template = output_directory / "%(id)s.%(ext)s"
     try:
         result = _run_with_browser_fallback(
@@ -203,7 +333,13 @@ def download_douyin_video(reference: str, output_directory: Path) -> str:
     except subprocess.TimeoutExpired as exc:
         raise DouyinVideoError("抖音视频下载超时，请重试") from exc
     if result.returncode != 0:
-        raise DouyinVideoError(f"抖音视频下载失败：{_failure_detail(result)}")
+        try:
+            metadata = _browser_metadata(reference)
+            return _download_direct_video(metadata["media_url"], metadata["video_id"], output_directory)
+        except (FileNotFoundError, OSError, RuntimeError, DouyinVideoError) as browser_exc:
+            raise DouyinVideoError(
+                f"抖音视频下载失败：{_failure_detail(result)}；独立浏览器回退失败：{browser_exc}"
+            ) from browser_exc
     return (result.stdout or "") + (result.stderr or "")
 
 
