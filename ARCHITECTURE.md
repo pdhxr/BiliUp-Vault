@@ -41,7 +41,7 @@ Tauri 主进程
 - `core/following_delete.py`：删除选中的 UP 登记和视频索引，不删除实际视频文件。
 - `core/repositories/followings.py`：保存登记记录、自动追踪下载开关并将其转换为 UP 管理列表行，不包含 HTTP 或前端逻辑。
 - `core/opencli_videos.py`：封装 OpenCLI 用户视频查询和视频下载命令，并标准化输出；浏览器型调用统一使用后台窗口模式。
-- `core/douyin_videos.py`：从抖音分享文本提取链接和作者，通过 yt-dlp 读取单视频元数据并下载视频；静态 `cover` 保存为网站竖版封面，仅允许受限抖音图片域名。抖音目前不向外部提供作者上传的独立横版封面，`origin_cover` 实际可能是视频画面截图，因此不作为封面保存。公开访问失败时复用本机 Chrome Cookie 重试，不请求字幕。
+- `core/douyin_videos.py`：从抖音分享文本提取链接和作者，优先通过 yt-dlp 读取单视频元数据并下载视频；浏览器 Cookie 或抖音详情 API 不可用时，通过系统适配层启动隔离的无头 Chrome/Edge，从公开页面 DOM 读取元数据和受限域名的签名 MP4 地址并流式下载，不访问用户主浏览器 Cookie 数据库。静态 `cover` 保存为网站竖版封面，仅允许受限抖音图片域名；不请求字幕。yt-dlp 由系统适配层从 `PATH` 及 Windows npm/WinGet、macOS Homebrew 等常见安装位置发现。
 - `core/video_sync.py`：刷新 UP 视频列表并回写视频统计。
 - `core/followings.py`：登记 UP；确认登记后编排一次首批视频刷新。
 - `core/video_reconcile.py`：协调远端追踪清单与本地视频库状态。

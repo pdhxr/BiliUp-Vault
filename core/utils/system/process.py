@@ -143,11 +143,49 @@ def _candidate_paths() -> list[Path]:
     return candidates
 
 
+def _yt_dlp_candidate_paths() -> list[Path]:
+    system = platform.system()
+    candidates: list[Path] = []
+    if system == "Darwin":
+        candidates.extend((
+            Path("/opt/homebrew/bin/yt-dlp"),
+            Path("/usr/local/bin/yt-dlp"),
+            Path.home() / ".local/bin/yt-dlp",
+        ))
+    elif system == "Windows":
+        app_data = os.environ.get("APPDATA")
+        if app_data:
+            candidates.extend((
+                Path(app_data) / "npm/yt-dlp.exe",
+                Path(app_data) / "npm/yt-dlp.cmd",
+                Path(app_data) / "npm/yt-dlp",
+            ))
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            candidates.extend((
+                Path(local_app_data) / "Programs/yt-dlp/yt-dlp.exe",
+                Path(local_app_data) / "Microsoft/WinGet/Links/yt-dlp.exe",
+            ))
+    else:
+        candidates.extend((Path("/usr/local/bin/yt-dlp"), Path.home() / ".local/bin/yt-dlp"))
+    return candidates
+
+
 def find_opencli() -> Path | None:
     discovered = shutil.which("opencli")
     if discovered:
         return Path(discovered)
     for candidate in _candidate_paths():
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def find_yt_dlp() -> Path | None:
+    discovered = shutil.which("yt-dlp")
+    if discovered:
+        return Path(discovered)
+    for candidate in _yt_dlp_candidate_paths():
         if candidate.is_file():
             return candidate
     return None
@@ -189,12 +227,14 @@ def run_opencli(
 
 def run_yt_dlp(arguments: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
     """Run yt-dlp without opening a console window on Windows."""
-    discovered = shutil.which("yt-dlp")
-    if not discovered:
+    executable = find_yt_dlp()
+    if executable is None:
         raise FileNotFoundError("yt-dlp")
-    executable = Path(discovered)
+    command = [str(executable), *arguments]
+    if os.name == "nt" and executable.suffix.lower() in {".cmd", ".bat"}:
+        command = [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", *command]
     return _run_managed(
-        [str(executable), *arguments],
+        command,
         text=True,
         encoding="utf-8",
         timeout=timeout,
