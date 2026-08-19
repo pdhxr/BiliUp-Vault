@@ -16,7 +16,11 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from core.download_files import COVER_SUFFIXES
-from core.utils.system.browser import dump_webpage_with_browser
+from core.utils.system.browser import (
+    browser_cookie_sources,
+    dump_webpage_with_browser,
+    isolated_browser_fallback_supported,
+)
 from core.utils.system.process import run_yt_dlp
 
 
@@ -128,18 +132,18 @@ def _run_with_browser_fallback(arguments: list[str], *, timeout: int) -> subproc
     """优先读取公开页面，失败后依次复用本机浏览器会话重试。"""
     last_result: subprocess.CompletedProcess[str] | None = None
     chrome_cookie_locked = False
-    for browser_arguments in (
-        [],
-        ["--cookies-from-browser", "chrome"],
-        ["--cookies-from-browser", "edge"],
-        ["--cookies-from-browser", "firefox"],
-    ):
+    attempts = [[]]
+    attempts.extend(["--cookies-from-browser", browser] for browser in browser_cookie_sources())
+    for browser_arguments in attempts:
         result = run_yt_dlp([*browser_arguments, *arguments], timeout=timeout)
         if result.returncode == 0:
             return result
         if browser_arguments and browser_arguments[-1] == "chrome":
             detail = f"{result.stderr or ''}\n{result.stdout or ''}".lower()
-            chrome_cookie_locked = "could not copy chrome cookie database" in detail
+            chrome_cookie_locked = (
+                isolated_browser_fallback_supported()
+                and "could not copy chrome cookie database" in detail
+            )
         last_result = result
     assert last_result is not None
     if chrome_cookie_locked:

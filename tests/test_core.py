@@ -35,7 +35,11 @@ from core.video_cover_backfill import backfill_covers_for_up
 from core.video_reconcile import reconcile_up_videos
 from core.video_sync import refresh_up_videos, refresh_up_videos_with_details
 from core.utils.system.directories import application_config_directory, choose_directory, open_directory
-from core.utils.system.browser import _headless_browser_candidates
+from core.utils.system.browser import (
+    _headless_browser_candidates,
+    browser_cookie_sources,
+    isolated_browser_fallback_supported,
+)
 from core.utils.system.resources import resource_path
 from core.utils.system.process import ProcessCancelledError, find_opencli, find_yt_dlp, run_ffmpeg, run_opencli, run_yt_dlp
 from core.utils.system.network import ServicePortError, available_local_port, prepare_biliup_port, stop_existing_biliup_services
@@ -227,7 +231,11 @@ class CoreTests(unittest.TestCase):
             subprocess.CompletedProcess([], 1, stdout="", stderr="ERROR: Could not copy Chrome cookie database"),
             subprocess.CompletedProcess([], 0, stdout='{"id":"1"}', stderr=""),
         ]
-        result = _run_with_browser_fallback(["--dump-single-json", "https://v.douyin.com/example/"], timeout=10)
+        with (
+            patch("core.douyin_videos.browser_cookie_sources", return_value=("chrome", "edge", "firefox")),
+            patch("core.douyin_videos.isolated_browser_fallback_supported", return_value=True),
+        ):
+            result = _run_with_browser_fallback(["--dump-single-json", "https://v.douyin.com/example/"], timeout=10)
         self.assertEqual(result.returncode, 0)
         self.assertEqual(run.call_args_list[2].args[0][:2], ["--cookies-from-browser", "edge"])
 
@@ -239,8 +247,27 @@ class CoreTests(unittest.TestCase):
             subprocess.CompletedProcess([], 1, stdout="", stderr="Edge cookies unavailable"),
             subprocess.CompletedProcess([], 1, stdout="", stderr="Firefox cookies unavailable"),
         ]
-        result = _run_with_browser_fallback(["--dump-single-json", "https://v.douyin.com/example/"], timeout=10)
+        with (
+            patch("core.douyin_videos.browser_cookie_sources", return_value=("chrome", "edge", "firefox")),
+            patch("core.douyin_videos.isolated_browser_fallback_supported", return_value=True),
+        ):
+            result = _run_with_browser_fallback(["--dump-single-json", "https://v.douyin.com/example/"], timeout=10)
         self.assertIn("完全退出 Chrome", result.stderr)
+
+    @patch("core.douyin_videos.run_yt_dlp")
+    def test_douyin_macos_cookie_fallback_only_tries_chrome(self, run) -> None:
+        run.side_effect = [
+            subprocess.CompletedProcess([], 1, stdout="", stderr="Fresh cookies are needed"),
+            subprocess.CompletedProcess([], 1, stdout="", stderr="Chrome cookies unavailable"),
+        ]
+        with (
+            patch("core.douyin_videos.browser_cookie_sources", return_value=("chrome",)),
+            patch("core.douyin_videos.isolated_browser_fallback_supported", return_value=False),
+        ):
+            result = _run_with_browser_fallback(["--dump-single-json", "https://v.douyin.com/example/"], timeout=10)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[1].args[0][:2], ["--cookies-from-browser", "chrome"])
 
     def test_other_video_record_uses_dedicated_index(self) -> None:
         library_root = self.root / "library"
@@ -453,13 +480,17 @@ class CoreTests(unittest.TestCase):
         candidates.return_value = [executable]
         self.assertEqual(find_yt_dlp(), executable)
 
-    def test_headless_browser_candidates_cover_windows_and_macos(self) -> None:
+    def test_browser_fallback_configuration_is_platform_specific(self) -> None:
         with patch("core.utils.system.browser.platform.system", return_value="Windows"):
             windows = _headless_browser_candidates()
+            self.assertEqual(browser_cookie_sources(), ("chrome", "edge", "firefox"))
+            self.assertTrue(isolated_browser_fallback_supported())
         with patch("core.utils.system.browser.platform.system", return_value="Darwin"):
             macos = _headless_browser_candidates()
+            self.assertEqual(browser_cookie_sources(), ("chrome",))
+            self.assertFalse(isolated_browser_fallback_supported())
         self.assertTrue(any(path.name == "chrome.exe" for path in windows))
-        self.assertTrue(any("Google Chrome.app" in str(path) for path in macos))
+        self.assertEqual(macos, [])
 
     @patch("core.utils.system.process._run_managed")
     @patch("core.utils.system.process.find_yt_dlp", return_value=Path("C:/npm/yt-dlp.cmd"))

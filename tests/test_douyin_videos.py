@@ -1,8 +1,10 @@
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from core.douyin_videos import _browser_metadata, _download_direct_video, _raw_cover_from_aweme, download_douyin_cover, remove_douyin_horizontal_cover
+from core.utils.system.browser import dump_webpage_with_browser
 
 
 class _Response:
@@ -116,6 +118,22 @@ class DouyinCoverTests(unittest.TestCase):
         )
         self.assertEqual(Path(target).read_bytes(), b"video-data")
         self.assertFalse((self.root / "739000009.mp4.part").exists())
+
+    @patch("core.utils.system.browser._run_managed")
+    @patch("core.utils.system.browser.find_headless_browser", return_value=Path("C:/Chrome/chrome.exe"))
+    @patch("core.utils.system.browser.platform.system", return_value="Windows")
+    def test_isolated_browser_timeout_has_actionable_error(self, _system, _find, run) -> None:
+        run.side_effect = subprocess.TimeoutExpired(["chrome"], 45)
+
+        with self.assertRaisesRegex(RuntimeError, "隔离浏览器访问页面超时"):
+            dump_webpage_with_browser("https://www.douyin.com/video/739000009")
+
+    @patch("core.utils.system.browser._run_managed")
+    @patch("core.utils.system.browser.platform.system", return_value="Darwin")
+    def test_macos_does_not_start_isolated_browser_fallback(self, _system, run) -> None:
+        with self.assertRaisesRegex(RuntimeError, "当前系统不启用隔离浏览器回退"):
+            dump_webpage_with_browser("https://www.douyin.com/video/739000009")
+        run.assert_not_called()
 
 
 if __name__ == "__main__":
