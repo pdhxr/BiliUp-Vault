@@ -59,7 +59,19 @@ def _load(path: Path) -> list[dict]:
     return rows
 
 
-def _matches(row: dict, *, bvid: str = "", title: str = "", date: str = "") -> bool:
+def _matches(
+    row: dict,
+    *,
+    bvid: str = "",
+    video_id: str = "",
+    platform: str = "",
+    title: str = "",
+    date: str = "",
+) -> bool:
+    if video_id:
+        row_video_id = str(row.get("video_id") or row.get("bvid") or "")
+        row_platform = str(row.get("platform") or "bilibili")
+        return row_video_id == str(video_id) and row_platform == str(platform or "bilibili")
     if bvid and str(row.get("bvid", "")).upper() == bvid.upper():
         return True
     return _normalize_date(row.get("date")) == _normalize_date(date) and str(row.get("title", "")).strip() == str(title).strip()
@@ -89,11 +101,19 @@ def find_local_video(root: Path, nickname: str, *, bvid: str = "", title: str = 
     return None
 
 
-def find_other_video(root: Path, *, bvid: str = "", title: str = "", date: str = "") -> dict | None:
+def find_other_video(
+    root: Path,
+    *,
+    bvid: str = "",
+    video_id: str = "",
+    platform: str = "",
+    title: str = "",
+    date: str = "",
+) -> dict | None:
     """查找 ``OtherVideos`` 索引中仍存在的单视频。"""
     index_path = root / "OtherVideos" / "videos.jsonl"
     for row in _load(index_path):
-        if not _matches(row, bvid=bvid, title=title, date=date):
+        if not _matches(row, bvid=bvid, video_id=video_id, platform=platform, title=title, date=date):
             continue
         relative_path = str(row.get("relative_path", ""))
         target = root / relative_path
@@ -133,6 +153,8 @@ def record_other_download(
     title: str,
     date: str,
     transcript: bool,
+    platform: str = "bilibili",
+    video_id: str = "",
 ) -> dict:
     """登记保存到 ``OtherVideos`` 的单视频。"""
     return _record_download(
@@ -143,6 +165,8 @@ def record_other_download(
         title=title,
         date=date,
         transcript=transcript,
+        platform=platform,
+        video_id=video_id or bvid,
     )
 
 
@@ -155,6 +179,8 @@ def _record_download(
     title: str,
     date: str,
     transcript: bool,
+    platform: str = "",
+    video_id: str = "",
 ) -> dict:
     if not video_path.is_file() or video_path.stat().st_size <= 0:
         raise FileNotFoundError(f"下载文件不存在：{video_path}")
@@ -171,8 +197,11 @@ def _record_download(
         "cover": has_cover_image(video_path, bvid),
         "scanned_at": _timestamp(),
     }
+    if platform or video_id:
+        entry["platform"] = platform or "bilibili"
+        entry["video_id"] = video_id or str(bvid)
     for index, row in enumerate(rows):
-        if _matches(row, bvid=bvid, title=title, date=date):
+        if _matches(row, bvid=bvid, video_id=video_id, platform=platform, title=title, date=date):
             entry["index"] = row.get("index", 0)
             rows[index] = entry
             break

@@ -132,6 +132,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn('id="progress-list"', html)
         self.assertIn('data-tab="other"', html)
         self.assertIn('id="single-video-url"', html)
+        self.assertIn("抖音分享链接", html)
         self.assertIn('id="btn-save-library-root"', html)
         self.assertIn('id="other-status"', html)
         self.assertIn('id="desktop-port"', html)

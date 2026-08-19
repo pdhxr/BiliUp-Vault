@@ -1,8 +1,4 @@
-"""单视频下载用例。
-
-单视频与已登记 UP 的下载共用 OpenCLI 适配、文件发现、重命名、字幕和进度
-组件；它只负责把结果保存到知识库的 ``OtherVideos`` 索引。
-"""
+"""B 站与抖音单视频下载用例，结果统一保存到 ``OtherVideos``。"""
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -14,6 +10,7 @@ from core.configuration import knowledge_base_root
 from core.cover_download import ensure_video_cover
 from core.download_files import directory_snapshot, find_video_file, fix_hevc_tag, has_cover_image, remove_partial_files, rename_video, rename_video_artifacts
 from core.download_progress import get_progress, now_iso, set_progress, watch_download_size
+from core.douyin_videos import download_douyin_cover, download_douyin_video, extract_douyin_author, extract_douyin_reference, fetch_douyin_metadata, remove_douyin_horizontal_cover
 from core.opencli_videos import DOWNLOAD_QUALITY_FALLBACKS, OpenCliVideoError, download_video, fetch_video_metadata
 from core.repositories.library import find_other_video, record_other_download
 from core.subtitle_download import download_subtitle, has_transcript
@@ -23,17 +20,24 @@ _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="biliup-single-
 _BV_PATTERN = re.compile(r"^BV[A-Za-z0-9]{6,}$", re.IGNORECASE)
 
 
-def _validate_reference(value: str) -> str:
+def _resolve_reference(value: str) -> tuple[str, str]:
     reference = str(value or "").strip()
     if not reference:
-        raise ValueError("请输入 B 站视频链接或 BV 号")
+        raise ValueError("请输入 B 站或抖音视频链接")
     if _BV_PATTERN.fullmatch(reference):
-        return reference
+        return "bilibili", reference
     if re.match(r"^https?://(?:www\.)?bilibili\.com/video/", reference, re.IGNORECASE):
-        return reference
+        return "bilibili", reference
     if re.match(r"^https?://b23\.tv/", reference, re.IGNORECASE):
-        return reference
-    raise ValueError("请输入有效的 B 站视频链接、b23.tv 短链接或 BV 号")
+        return "bilibili", reference
+    douyin_reference = extract_douyin_reference(reference)
+    if douyin_reference:
+        return "douyin", douyin_reference
+    raise ValueError("请输入有效的 B 站链接、BV 号或抖音分享链接")
+
+
+def _video_id(metadata: dict[str, str]) -> str:
+    return str(metadata.get("video_id") or metadata.get("bvid") or "").strip()
 
 
 def _date_from_metadata(value: object) -> str:
@@ -49,7 +53,8 @@ def _download_directory(root: Path) -> Path:
 
 
 def _run_job(metadata: dict[str, str]) -> None:
-    bvid = metadata["bvid"]
+    platform = metadata.get("platform") or "bilibili"
+    bvid = _video_id(metadata)
     title = metadata["title"]
     nickname = metadata.get("nickname") or "单视频"
     date = _date_from_metadata(metadata.get("publish_time"))
@@ -58,24 +63,37 @@ def _run_job(metadata: dict[str, str]) -> None:
         directory = _download_directory(root)
         directory.mkdir(parents=True, exist_ok=True)
         before = directory_snapshot(directory)
-        set_progress(bvid, status="downloading", title=title, started_at=now_iso())
+        set_progress(
+            bvid,
+            status="downloading",
+            platform=platform,
+            video_id=bvid,
+            title=title,
+            started_at=now_iso(),
+        )
         stop_monitor = Event()
         monitor = watch_download_size(bvid, directory, before, stop_monitor)
         source = None
         last_error = ""
         try:
-            for attempt, quality in enumerate(DOWNLOAD_QUALITY_FALLBACKS):
-                try:
-                    download_video(bvid, str(directory), quality=quality)
-                except OpenCliVideoError as exc:
-                    last_error = str(exc)
+            if platform == "douyin":
+                download_douyin_video(metadata["source_url"], directory)
                 source = find_video_file(directory, bvid, before)
-                if source is not None:
-                    break
-                if not last_error:
-                    last_error = "OpenCLI 下载完成，但未找到视频文件"
-                if attempt + 1 < len(DOWNLOAD_QUALITY_FALLBACKS):
-                    remove_partial_files(directory, bvid)
+                if source is None:
+                    last_error = "yt-dlp 下载完成，但未找到抖音视频文件"
+            else:
+                for attempt, quality in enumerate(DOWNLOAD_QUALITY_FALLBACKS):
+                    try:
+                        download_video(bvid, str(directory), quality=quality)
+                    except OpenCliVideoError as exc:
+                        last_error = str(exc)
+                    source = find_video_file(directory, bvid, before)
+                    if source is not None:
+                        break
+                    if not last_error:
+                        last_error = "OpenCLI 下载完成，但未找到视频文件"
+                    if attempt + 1 < len(DOWNLOAD_QUALITY_FALLBACKS):
+                        remove_partial_files(directory, bvid)
         finally:
             stop_monitor.set()
             monitor.join(timeout=1)
@@ -84,19 +102,31 @@ def _run_job(metadata: dict[str, str]) -> None:
         target = rename_video(source, directory, nickname, "single-video", title, date)
         rename_video_artifacts(directory, bvid, target)
         fix_hevc_tag(target)
-        ensure_video_cover(bvid, target, metadata.get("thumbnail", ""))
-        transcript = download_subtitle(bvid, target)
+        if platform == "douyin":
+            download_douyin_cover(metadata.get("thumbnail", ""), target, replace=True)
+            remove_douyin_horizontal_cover(target)
+            horizontal_thumbnail = metadata.get("horizontal_thumbnail", "")
+            if horizontal_thumbnail:
+                download_douyin_cover(horizontal_thumbnail, target, variant="horizontal", replace=True)
+            transcript = False
+        else:
+            ensure_video_cover(bvid, target, metadata.get("thumbnail", ""))
+            transcript = download_subtitle(bvid, target)
         entry = record_other_download(
             root,
             target,
-            bvid=bvid,
+            bvid=bvid if platform == "bilibili" else "",
             title=title,
             date=date,
             transcript=transcript,
+            platform=platform,
+            video_id=bvid,
         )
         set_progress(
             bvid,
             status="success",
+            platform=platform,
+            video_id=bvid,
             title=title,
             file_path=entry["relative_path"],
             size_bytes=entry["size_bytes"],
@@ -107,24 +137,37 @@ def _run_job(metadata: dict[str, str]) -> None:
 
 
 def _run_existing_job(metadata: dict[str, str], existing: dict[str, object], root: Path) -> None:
-    bvid = metadata["bvid"]
+    platform = metadata.get("platform") or "bilibili"
+    bvid = _video_id(metadata)
     title = metadata["title"]
     date = _date_from_metadata(metadata.get("publish_time"))
     local_path = root / str(existing["relative_path"])
     try:
-        ensure_video_cover(bvid, local_path, metadata.get("thumbnail", ""))
-        transcript = download_subtitle(bvid, local_path)
+        if platform == "douyin":
+            download_douyin_cover(metadata.get("thumbnail", ""), local_path, replace=True)
+            remove_douyin_horizontal_cover(local_path)
+            horizontal_thumbnail = metadata.get("horizontal_thumbnail", "")
+            if horizontal_thumbnail:
+                download_douyin_cover(horizontal_thumbnail, local_path, variant="horizontal", replace=True)
+            transcript = False
+        else:
+            ensure_video_cover(bvid, local_path, metadata.get("thumbnail", ""))
+            transcript = download_subtitle(bvid, local_path)
         entry = record_other_download(
             root,
             local_path,
-            bvid=bvid,
+            bvid=bvid if platform == "bilibili" else "",
             title=title,
             date=date,
             transcript=transcript,
+            platform=platform,
+            video_id=bvid,
         )
         set_progress(
             bvid,
             status="success",
+            platform=platform,
+            video_id=bvid,
             title=title,
             file_path=entry["relative_path"],
             size_bytes=entry["size_bytes"],
@@ -136,21 +179,28 @@ def _run_existing_job(metadata: dict[str, str], existing: dict[str, object], roo
 
 def queue_single_video_download(video_ref: str) -> dict[str, object]:
     """解析并异步提交单视频下载，返回可由统一进度接口查询的任务。"""
-    reference = _validate_reference(video_ref)
-    metadata = fetch_video_metadata(reference)
-    bvid = str(metadata.get("bvid", "")).strip()
+    platform, reference = _resolve_reference(video_ref)
+    if platform == "douyin":
+        metadata = fetch_douyin_metadata(reference)
+        shared_author = extract_douyin_author(video_ref)
+        if shared_author:
+            metadata["nickname"] = shared_author
+    else:
+        metadata = fetch_video_metadata(reference)
+        metadata.update({"platform": "bilibili", "video_id": str(metadata.get("bvid", "")), "source_url": reference})
+    bvid = _video_id(metadata)
     title = str(metadata.get("title", "")).strip()
     if not bvid or not title:
-        raise OpenCliVideoError("OpenCLI 未返回完整的视频信息")
+        raise OpenCliVideoError("视频信息不完整")
     current = get_progress(bvid)
     if current.get("status") in {"queued", "downloading"}:
         return current
     root = knowledge_base_root()
     date = _date_from_metadata(metadata.get("publish_time"))
-    existing = find_other_video(root, bvid=bvid, title=title, date=date)
+    existing = find_other_video(root, video_id=bvid, platform=platform, title=title, date=date)
     if existing:
         local_path = root / str(existing["relative_path"])
-        if (
+        if platform != "douyin" and (
             existing.get("transcript")
             and has_transcript(local_path)
             and existing.get("cover")
@@ -159,6 +209,8 @@ def queue_single_video_download(video_ref: str) -> dict[str, object]:
             return set_progress(
                 bvid,
                 status="success",
+                platform=platform,
+                video_id=bvid,
                 title=title,
                 file_path=existing["relative_path"],
                 size_bytes=existing["size_bytes"],
@@ -167,6 +219,8 @@ def queue_single_video_download(video_ref: str) -> dict[str, object]:
         job = set_progress(
             bvid,
             status="queued",
+            platform=platform,
+            video_id=bvid,
             title=title,
             started_at=now_iso(),
             finished_at="",
@@ -178,6 +232,8 @@ def queue_single_video_download(video_ref: str) -> dict[str, object]:
     job = set_progress(
         bvid,
         status="queued",
+        platform=platform,
+        video_id=bvid,
         title=title,
         started_at=now_iso(),
         finished_at="",

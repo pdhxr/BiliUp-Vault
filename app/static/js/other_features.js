@@ -169,7 +169,7 @@
   async function downloadSingle() {
     const url = singleInput.value.trim();
     if (!url) {
-      setStatus('请输入 B 站视频链接或 BV 号', true);
+      setStatus('请输入 B 站或抖音视频链接', true);
       return;
     }
     stopProgressPolling();

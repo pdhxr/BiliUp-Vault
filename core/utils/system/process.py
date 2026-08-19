@@ -187,6 +187,21 @@ def run_opencli(
     )
 
 
+def run_yt_dlp(arguments: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+    """Run yt-dlp without opening a console window on Windows."""
+    discovered = shutil.which("yt-dlp")
+    if not discovered:
+        raise FileNotFoundError("yt-dlp")
+    executable = Path(discovered)
+    return _run_managed(
+        [str(executable), *arguments],
+        text=True,
+        encoding="utf-8",
+        timeout=timeout,
+        env=_process_environment(executable),
+    )
+
+
 def _run_media_tool(name: str, arguments: list[str], timeout: int) -> subprocess.CompletedProcess[bytes]:
     executable = shutil.which(name)
     if not executable:

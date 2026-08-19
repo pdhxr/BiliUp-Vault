@@ -17,6 +17,7 @@ from core.configuration import (
 )
 from core.download_progress import progress_rows, set_progress
 from core.download_files import fix_hevc_tag
+from core.douyin_videos import extract_douyin_author, extract_douyin_reference, fetch_douyin_metadata
 from core.followings import save_following
 from core.followings import save_following_and_refresh
 from core.following_delete import delete_followings
@@ -169,6 +170,47 @@ class CoreTests(unittest.TestCase):
         with self.assertRaisesRegex(OpenCliVideoError, "检查 BV 号及大小写"):
             fetch_video_metadata("BV1CBuQ6rEhQ")
 
+    def test_extracts_douyin_url_from_share_text(self) -> None:
+        reference = extract_douyin_reference("复制打开抖音，看看作品 https://v.douyin.com/AbCd123/ 其他文字")
+        self.assertEqual(reference, "https://v.douyin.com/AbCd123/")
+
+    def test_extracts_douyin_author_from_featured_share_text(self) -> None:
+        first = "7.17 【抖音精选】点击链接or复制打开app，看看【老傅1024的作品】一切皆插件：拆解 Harness 背后的 Cord... https://v.douyin.com/HO0UXqnDpHM/ H@v.sr :5pm 11/19 Gvf:/"
+        second = "1.51 【抖音精选】点击链接or复制打开app，看看【敲代码的小虾米的作品】Vibe Coding一个桌面应用的技术路线 # ... https://v.douyin.com/0-prm5iSaN4/ :1pm 08/05 ndN:/ N@w.sR"
+        self.assertEqual(extract_douyin_author(first), "老傅1024")
+        self.assertEqual(extract_douyin_author(second), "敲代码的小虾米")
+
+    @patch("core.douyin_videos._fetch_raw_cover", return_value="https://p3-sign.douyinpic.com/raw-cover.jpeg")
+    @patch("core.douyin_videos.run_yt_dlp")
+    def test_douyin_metadata_is_normalized(self, run, raw_cover) -> None:
+        run.return_value = subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({
+                "id": "739000001",
+                "title": "抖音单视频",
+                "uploader": "示例作者",
+                "upload_date": "20260812",
+                "thumbnail": "https://p3-sign.douyinpic.com/origin-cover.jpeg",
+                "webpage_url": "https://v.douyin.com/AbCd123/",
+                "thumbnails": [
+                    {"id": "origin_cover", "url": "https://p3-sign.douyinpic.com/origin-cover.jpeg"},
+                    {"id": "cover", "url": "https://p3-sign.douyinpic.com/website-cover.jpeg"},
+                    {"id": "dynamic_cover", "url": "https://p3-sign.douyinpic.com/dynamic-cover.webp"},
+                ],
+            }),
+            stderr="",
+        )
+        metadata = fetch_douyin_metadata("https://v.douyin.com/AbCd123/")
+        self.assertEqual(metadata["platform"], "douyin")
+        self.assertEqual(metadata["video_id"], "739000001")
+        self.assertEqual(metadata["nickname"], "示例作者")
+        self.assertEqual(metadata["publish_time"], "20260812")
+        self.assertEqual(metadata["thumbnail"], "https://p3-sign.douyinpic.com/website-cover.jpeg")
+        self.assertEqual(metadata["horizontal_thumbnail"], "https://p3-sign.douyinpic.com/raw-cover.jpeg")
+        raw_cover.assert_called_once_with("https://www.douyin.com/video/739000001")
+        self.assertNotIn("--cookies-from-browser", run.call_args.args[0])
+
     def test_other_video_record_uses_dedicated_index(self) -> None:
         library_root = self.root / "library"
         video = library_root / "OtherVideos/示例 UP_20260731_单视频.mp4"
@@ -201,6 +243,59 @@ class CoreTests(unittest.TestCase):
         job = queue_single_video_download("BV1abc234567")
         self.assertEqual(job["status"], "queued")
         submit.assert_called_once()
+
+    @patch("core.single_video_download._executor.submit")
+    @patch("core.single_video_download.fetch_douyin_metadata", return_value={
+        "platform": "douyin",
+        "video_id": "739000002",
+        "title": "抖音单视频",
+        "nickname": "抖音作者",
+        "publish_time": "20260812",
+        "source_url": "https://v.douyin.com/Queue123/",
+    })
+    @patch("core.single_video_download.knowledge_base_root")
+    def test_douyin_share_text_queues_single_video_job(self, configured_root, metadata, submit) -> None:
+        configured_root.return_value = self.root / "library"
+        job = queue_single_video_download("看看【分享文本作者的作品】复制此链接 https://v.douyin.com/Queue123/ 打开抖音")
+        self.assertEqual(job["bvid"], "739000002")
+        self.assertEqual(job["status"], "queued")
+        metadata.assert_called_once_with("https://v.douyin.com/Queue123/")
+        submit.assert_called_once()
+        self.assertEqual(submit.call_args.args[1]["nickname"], "分享文本作者")
+
+    @patch("core.single_video_download._executor.submit")
+    @patch("core.single_video_download.fetch_douyin_metadata", return_value={
+        "platform": "douyin",
+        "video_id": "739000004",
+        "title": "已有抖音视频",
+        "nickname": "抖音作者",
+        "publish_time": "20260812",
+        "thumbnail": "https://p3-sign.douyinpic.com/website-cover.jpeg",
+        "source_url": "https://v.douyin.com/Existing123/",
+    })
+    @patch("core.single_video_download.knowledge_base_root")
+    def test_existing_douyin_video_queues_website_cover_refresh(self, configured_root, _metadata, submit) -> None:
+        library_root = self.root / "library"
+        configured_root.return_value = library_root
+        video = library_root / "OtherVideos/抖音作者_20260812_已有抖音视频.mp4"
+        video.parent.mkdir(parents=True, exist_ok=True)
+        video.write_bytes(b"video")
+        record_other_download(
+            library_root,
+            video,
+            bvid="",
+            video_id="739000004",
+            platform="douyin",
+            title="已有抖音视频",
+            date="20260812",
+            transcript=False,
+        )
+
+        job = queue_single_video_download("https://v.douyin.com/Existing123/")
+
+        self.assertEqual(job["status"], "queued")
+        submit.assert_called_once()
+        self.assertEqual(submit.call_args.args[1]["video_id"], "739000004")
 
     @patch("core.single_video_download.fix_hevc_tag", return_value=False)
     @patch("core.single_video_download.download_subtitle", return_value=False)
@@ -235,6 +330,68 @@ class CoreTests(unittest.TestCase):
         cover.assert_called_once()
         fixed_path = library_root / "OtherVideos/示例 UP_20260810_视频.mp4"
         fix_tag.assert_called_once_with(fixed_path)
+
+    @patch("core.single_video_download.fix_hevc_tag", return_value=False)
+    @patch("core.single_video_download.download_subtitle")
+    @patch("core.single_video_download.ensure_video_cover")
+    @patch("core.single_video_download.download_douyin_cover")
+    @patch("core.single_video_download.download_douyin_video")
+    @patch("core.single_video_download.knowledge_base_root")
+    def test_douyin_download_saves_thumbnail_without_requesting_subtitle(
+        self,
+        configured_root,
+        douyin_download,
+        douyin_cover,
+        cover,
+        subtitle,
+        fix_tag,
+    ) -> None:
+        library_root = self.root / "library"
+        configured_root.return_value = library_root
+
+        def fake_download(_reference: str, output_directory: Path) -> str:
+            (output_directory / "739000003.mp4").write_bytes(b"video")
+            return "downloaded"
+
+        def save_website_cover(
+            thumbnail_url: str,
+            video_path: Path,
+            *,
+            variant: str = "cover",
+            replace: bool,
+        ) -> bool:
+            self.assertTrue(replace)
+            if variant == "horizontal":
+                self.assertEqual(thumbnail_url, "https://p3-sign.douyinpic.com/raw-cover.jpeg")
+                video_path.with_name(video_path.stem + "_cover_horizontal.jpg").write_bytes(b"raw-cover")
+            else:
+                self.assertEqual(thumbnail_url, "https://p3-sign.douyinpic.com/website-cover.jpeg")
+                video_path.with_name(video_path.stem + "_cover.jpg").write_bytes(b"cover")
+            return True
+
+        douyin_download.side_effect = fake_download
+        douyin_cover.side_effect = save_website_cover
+        run_single_video_job({
+            "platform": "douyin",
+            "video_id": "739000003",
+            "title": "抖音视频",
+            "nickname": "抖音作者",
+            "publish_time": "20260812",
+            "thumbnail": "https://p3-sign.douyinpic.com/website-cover.jpeg",
+            "horizontal_thumbnail": "https://p3-sign.douyinpic.com/raw-cover.jpeg",
+            "source_url": "https://v.douyin.com/Download123/",
+        })
+
+        row = json.loads((library_root / "OtherVideos/videos.jsonl").read_text(encoding="utf-8"))
+        self.assertEqual(row["platform"], "douyin")
+        self.assertEqual(row["video_id"], "739000003")
+        self.assertTrue(row["cover"])
+        self.assertFalse(row["transcript"])
+        self.assertTrue((library_root / "OtherVideos/抖音作者_20260812_抖音视频_cover_horizontal.jpg").is_file())
+        self.assertEqual(douyin_cover.call_count, 2)
+        cover.assert_not_called()
+        subtitle.assert_not_called()
+        fix_tag.assert_called_once_with(library_root / "OtherVideos/抖音作者_20260812_抖音视频.mp4")
 
     def test_source_resource_path_is_relative(self) -> None:
         self.assertEqual(resource_path("app/static"), Path("app/static"))

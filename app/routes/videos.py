@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 from core.configuration import KnowledgeBaseConfigurationError
 from core.download_progress import progress_rows
+from core.douyin_videos import DouyinVideoError
 from core.opencli_videos import OpenCliVideoError
 from core.single_video_download import queue_single_video_download
 from core.video_download import queue_downloads
@@ -142,7 +143,7 @@ def download_single_video(request: SingleVideoDownloadRequest) -> dict[str, obje
         job = queue_single_video_download(request.url)
     except KnowledgeBaseConfigurationError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except OpenCliVideoError as exc:
+    except (OpenCliVideoError, DouyinVideoError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

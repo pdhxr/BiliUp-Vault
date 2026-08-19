@@ -150,8 +150,8 @@
 
 - “其他功能”页签打开时通过 `GET /api/setup-status` 显示当前 `knowledge_base_root`。
 - “选择并保存位置”复用首次设置的系统目录选择器和配置写入流程；用户取消选择时不修改配置。打开目录按钮分别调用 `POST /api/library/open-folder` 和 `POST /api/single-video/open-folder`，由系统适配层使用 Finder 或 Explorer 打开目录。
-- 单视频下载调用 `POST /api/single-video/download`，输入支持 B 站完整链接、`b23.tv` 短链接和 BV 号。core 先通过 `bilibili video` 获取 BV 号、标题、作者、发布时间和封面 URL，再复用现有后台下载、重试、文件发现、命名、字幕/封面获取和统一进度接口。
-- 单视频文件保存到 `<knowledge_base_root>/OtherVideos/`，其本地索引保存到 `<knowledge_base_root>/OtherVideos/videos.jsonl`，不写入 `UpList`，不加入 UP 自动追踪。下载进度仍通过 `GET /api/videos/download-progress` 查询。
+- 单视频下载调用 `POST /api/single-video/download`，输入支持 B 站完整链接、`b23.tv` 短链接、BV 号、抖音分享文本、抖音短链接和正式视频链接。B 站通过 `bilibili video` 获取元数据并沿用现有字幕/封面流程；抖音通过 yt-dlp 获取元数据和视频，元数据中的 `cover` 保存为 `<视频主名>_cover.<扩展名>` 网站竖版封面。抖音目前不向外部提供作者上传的独立横版封面，`origin_cover` 实际可能是视频画面截图，因此项目不下载或生成横版封面。已有抖音视频重新提交时只刷新竖版封面，不重复下载视频；公开访问失败时使用本机 Chrome Cookie 重试，不请求字幕。
+- 单视频文件保存到 `<knowledge_base_root>/OtherVideos/`，其本地索引保存到 `<knowledge_base_root>/OtherVideos/videos.jsonl`，以 `platform` 和 `video_id` 区分来源；B 站记录继续保存 `bvid`。单视频不写入 `UpList`，不加入 UP 自动追踪，下载进度仍通过 `GET /api/videos/download-progress` 查询。
 
 ### 4.10 Tauri 桌面运行
 
