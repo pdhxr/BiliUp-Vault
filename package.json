@@ -1,7 +1,7 @@
 {
   "name": "biliup-desktop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "scripts": {
     "tauri": "tauri",
     "desktop:dev": "npm run sidecar:build && node packaging/run_tauri.mjs dev",

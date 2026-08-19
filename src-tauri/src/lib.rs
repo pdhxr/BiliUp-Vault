@@ -283,10 +283,33 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building BiliUp desktop application");
 
-    app.run(|app, event| {
-        if matches!(event, RunEvent::Exit) {
+    app.run(|app, event| match event {
+        RunEvent::ExitRequested { api, .. }
+            if !app.state::<ShutdownState>().0.load(Ordering::SeqCst) =>
+        {
+            api.prevent_exit();
+            let port = app
+                .state::<CurrentPortState>()
+                .0
+                .lock()
+                .ok()
+                .and_then(|port| *port)
+                .unwrap_or(DEFAULT_PORT);
+            begin_shutdown(app.clone(), port);
+        }
+        RunEvent::Exit => {
+            let port = app
+                .state::<CurrentPortState>()
+                .0
+                .lock()
+                .ok()
+                .and_then(|port| *port)
+                .unwrap_or(DEFAULT_PORT);
+            request_backend_shutdown(port);
+            thread::sleep(Duration::from_millis(900));
             stop_sidecar(app);
         }
+        _ => {}
     });
 }
 

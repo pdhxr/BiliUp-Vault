@@ -6,6 +6,23 @@
 
 暂无。
 
+## [0.3.0] - 2026-08-19
+
+### 新增
+
+- “其他功能”的单视频下载支持抖音分享文本、短链接和正式视频链接。
+- 抖音视频通过 yt-dlp 获取元数据与视频，保存网站竖版封面，并在公开访问失败时使用本机 Chrome Cookie 重试。
+- `OtherVideos/videos.jsonl` 使用 `platform` 和 `video_id` 区分 B 站与抖音来源，已有视频不会重复下载。
+
+### 修复
+
+- macOS 从应用菜单或系统退出应用时，先正常关闭 Python 后端并回收 sidecar，不再遗留监听端口的后台进程。
+
+### 验证状态
+
+- macOS Apple Silicon 的 122 项自动测试、Rust 检查、sidecar 冒烟和 Tauri release 构建均已通过。
+- macOS 安装包尚未签名或公证；Windows 安装包仍需在 Windows 原生环境构建和验证。
+
 ## [0.2.0] - 2026-08-18
 
 ### 新增

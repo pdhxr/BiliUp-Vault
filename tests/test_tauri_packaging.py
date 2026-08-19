@@ -58,6 +58,15 @@ class TauriPackagingTests(unittest.TestCase):
         self.assertIn("PyInstaller", run.call_args.args[0])
         self.assertEqual(Path(copy.call_args.args[1]).name, destination.name)
 
+    def test_desktop_exit_request_gracefully_stops_sidecar(self) -> None:
+        source = (_PROJECT_ROOT / "src-tauri/src/lib.rs").read_text(encoding="utf-8")
+        self.assertIn("RunEvent::ExitRequested", source)
+        self.assertIn("api.prevent_exit()", source)
+        self.assertIn("begin_shutdown(app.clone(), port)", source)
+        exit_handler = source.split("RunEvent::Exit =>", 1)[1]
+        self.assertIn("request_backend_shutdown(port)", exit_handler)
+        self.assertIn("stop_sidecar(app)", exit_handler)
+
 
 if __name__ == "__main__":
     unittest.main()
