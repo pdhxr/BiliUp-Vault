@@ -8,7 +8,7 @@ from threading import Event
 
 from core.configuration import knowledge_base_root
 from core.cover_download import ensure_video_cover
-from core.download_files import directory_snapshot, find_video_file, fix_hevc_tag, has_cover_image, remove_partial_files, rename_video, rename_video_artifacts
+from core.download_files import COVER_SUFFIXES, directory_snapshot, find_video_file, fix_hevc_tag, has_cover_image, remove_partial_files, rename_video, rename_video_artifacts
 from core.download_progress import get_progress, now_iso, set_progress, watch_download_size
 from core.douyin_videos import download_douyin_cover, download_douyin_video, extract_douyin_author, extract_douyin_reference, fetch_douyin_metadata, remove_douyin_horizontal_cover
 from core.opencli_videos import DOWNLOAD_QUALITY_FALLBACKS, OpenCliVideoError, download_video, fetch_video_metadata
@@ -149,6 +149,22 @@ def _run_existing_job(metadata: dict[str, str], existing: dict[str, object], roo
     local_path = root / str(existing["relative_path"])
     try:
         if platform == "douyin":
+            previous_path = local_path
+            local_path = rename_video(
+                previous_path,
+                previous_path.parent,
+                metadata.get("nickname") or "单视频",
+                "single-video",
+                title,
+                date,
+            )
+            if local_path != previous_path:
+                for suffix in COVER_SUFFIXES:
+                    for variant in ("cover", "cover_horizontal"):
+                        previous_cover = previous_path.with_name(f"{previous_path.stem}_{variant}{suffix}")
+                        updated_cover = local_path.with_name(f"{local_path.stem}_{variant}{suffix}")
+                        if previous_cover.is_file() and not updated_cover.exists():
+                            previous_cover.replace(updated_cover)
             download_douyin_cover(metadata.get("thumbnail", ""), local_path, replace=True)
             remove_douyin_horizontal_cover(local_path)
             horizontal_thumbnail = metadata.get("horizontal_thumbnail", "")

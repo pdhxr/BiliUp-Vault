@@ -24,7 +24,7 @@ from core.following_delete import delete_followings
 from core.opencli_videos import DOWNLOAD_QUALITY_FALLBACKS, OpenCliCancelledError, OpenCliVideoError, _items, download_video, fetch_user_videos, fetch_video_metadata, fetch_video_subtitles
 from core.repositories.followings import list_rows, save, set_scheduled_tracking
 from core.repositories.library import list_local_videos, record_download, record_other_download
-from core.single_video_download import _run_job as run_single_video_job, queue_single_video_download
+from core.single_video_download import _run_existing_job as run_existing_single_video_job, _run_job as run_single_video_job, queue_single_video_download
 from core.repositories.videos import list_videos, mark_downloaded, merge_videos
 from core.subtitle_download import download_subtitle, has_transcript
 from core.up_search import _parse_items, search_up
@@ -224,6 +224,27 @@ class CoreTests(unittest.TestCase):
         raw_cover.assert_called_once_with("https://www.douyin.com/video/739000001")
         self.assertNotIn("--cookies-from-browser", run.call_args.args[0])
 
+    @patch("core.douyin_videos._fetch_raw_cover", return_value="")
+    @patch("core.douyin_videos.run_yt_dlp")
+    def test_douyin_metadata_prefers_channel_as_nickname(self, run, _raw_cover) -> None:
+        run.return_value = subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({
+                "id": "7674193013408681279",
+                "title": "小麦和威龙偶遇小博博会发生什么？",
+                "uploader": "52605356517",
+                "uploader_id": "3326479432685816",
+                "channel": "左手动漫（三角洲行动）",
+                "upload_date": "20260816",
+            }),
+            stderr="",
+        )
+
+        metadata = fetch_douyin_metadata("https://v.douyin.com/dEsF94lpAdY/")
+
+        self.assertEqual(metadata["nickname"], "左手动漫（三角洲行动）")
+
     @patch("core.douyin_videos.run_yt_dlp")
     def test_douyin_cookie_fallback_tries_edge_after_locked_chrome(self, run) -> None:
         run.side_effect = [
@@ -354,6 +375,43 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(job["status"], "queued")
         submit.assert_called_once()
         self.assertEqual(submit.call_args.args[1]["video_id"], "739000004")
+
+    @patch("core.single_video_download.remove_douyin_horizontal_cover")
+    @patch("core.single_video_download.download_douyin_cover", return_value=True)
+    def test_existing_douyin_video_updates_numeric_nickname_filename(self, _cover, _remove_horizontal) -> None:
+        library_root = self.root / "library"
+        old_video = library_root / "OtherVideos/52605356517_20260816_测试视频.mp4"
+        old_video.parent.mkdir(parents=True, exist_ok=True)
+        old_video.write_bytes(b"video")
+        old_cover = old_video.with_name(f"{old_video.stem}_cover.jpg")
+        old_cover.write_bytes(b"cover")
+        existing = record_other_download(
+            library_root,
+            old_video,
+            bvid="",
+            video_id="7674193013408681279",
+            platform="douyin",
+            title="测试视频",
+            date="20260816",
+            transcript=False,
+        )
+
+        run_existing_single_video_job({
+            "platform": "douyin",
+            "video_id": "7674193013408681279",
+            "title": "测试视频",
+            "nickname": "左手动漫（三角洲行动）",
+            "publish_time": "20260816",
+            "thumbnail": "https://p3-sign.douyinpic.com/website-cover.jpeg",
+            "source_url": "https://v.douyin.com/dEsF94lpAdY/",
+        }, existing, library_root)
+
+        updated_video = library_root / "OtherVideos/左手动漫（三角洲行动）_20260816_测试视频.mp4"
+        self.assertTrue(updated_video.is_file())
+        self.assertTrue(updated_video.with_name(f"{updated_video.stem}_cover.jpg").is_file())
+        self.assertFalse(old_video.exists())
+        row = json.loads((library_root / "OtherVideos/videos.jsonl").read_text(encoding="utf-8"))
+        self.assertEqual(row["relative_path"], updated_video.relative_to(library_root).as_posix())
 
     @patch("core.single_video_download.fix_hevc_tag", return_value=False)
     @patch("core.single_video_download.download_subtitle", return_value=False)

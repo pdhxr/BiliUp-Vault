@@ -275,7 +275,7 @@ def fetch_douyin_metadata(reference: str) -> dict[str, str]:
         "platform": "douyin",
         "video_id": video_id,
         "title": title,
-        "nickname": str(data.get("uploader") or data.get("creator") or "抖音视频").strip(),
+        "nickname": str(data.get("channel") or data.get("creator") or data.get("uploader") or "抖音视频").strip(),
         "publish_time": _publish_date(data),
         "thumbnail": _website_cover(data),
         "horizontal_thumbnail": raw_cover,
