@@ -18,6 +18,19 @@ from core.subtitle_download import download_subtitle, has_transcript
 
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="biliup-single-download")
 _BV_PATTERN = re.compile(r"^BV[A-Za-z0-9]{6,}$", re.IGNORECASE)
+_BILIBILI_URL = re.compile(
+    r"(?:https?://)?(?:(?:www\.)?bilibili\.com/video/|b23\.tv/)[^\s<>\"']+",
+    re.IGNORECASE,
+)
+_TRAILING_URL_PUNCTUATION = "，。！？；：、,.!?;:)]}）】》>"
+
+
+def _extract_bilibili_reference(value: str) -> str:
+    match = _BILIBILI_URL.search(str(value or "").strip())
+    if not match:
+        return ""
+    reference = match.group(0).rstrip(_TRAILING_URL_PUNCTUATION)
+    return reference if reference.lower().startswith(("http://", "https://")) else f"https://{reference}"
 
 
 def _resolve_reference(value: str) -> tuple[str, str]:
@@ -26,10 +39,9 @@ def _resolve_reference(value: str) -> tuple[str, str]:
         raise ValueError("请输入 B 站或抖音视频链接")
     if _BV_PATTERN.fullmatch(reference):
         return "bilibili", reference
-    if re.match(r"^https?://(?:www\.)?bilibili\.com/video/", reference, re.IGNORECASE):
-        return "bilibili", reference
-    if re.match(r"^https?://b23\.tv/", reference, re.IGNORECASE):
-        return "bilibili", reference
+    bilibili_reference = _extract_bilibili_reference(reference)
+    if bilibili_reference:
+        return "bilibili", bilibili_reference
     douyin_reference = extract_douyin_reference(reference)
     if douyin_reference:
         return "douyin", douyin_reference

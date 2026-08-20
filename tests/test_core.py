@@ -324,6 +324,23 @@ class CoreTests(unittest.TestCase):
         submit.assert_called_once()
 
     @patch("core.single_video_download._executor.submit")
+    @patch("core.single_video_download.fetch_video_metadata", return_value={
+        "bvid": "BV9share23456",
+        "title": "浪漫主义油画《寂泊》",
+        "nickname": "示例 UP",
+        "publish_time": "2026-07-31 04:00",
+    })
+    @patch("core.single_video_download.knowledge_base_root")
+    def test_bilibili_share_text_extracts_short_url(self, configured_root, metadata, submit) -> None:
+        configured_root.return_value = self.root / "library"
+
+        job = queue_single_video_download("【浪漫主义油画《寂泊》-哔哩哔哩】 https://b23.tv/LjPFmTG。")
+
+        self.assertEqual(job["status"], "queued")
+        metadata.assert_called_once_with("https://b23.tv/LjPFmTG")
+        submit.assert_called_once()
+
+    @patch("core.single_video_download._executor.submit")
     @patch("core.single_video_download.fetch_douyin_metadata", return_value={
         "platform": "douyin",
         "video_id": "739000002",
