@@ -4,7 +4,7 @@
 >
 > 参考实现：当前仓库的 `dev-full` 分支。另一分支的文件位置和接口可能不同，执行时应先审计，再迁移设计；不要机械复制整份文件。
 
-> BiliUp 当前项目适配：现有用户配置固定在 macOS `~/Library/Application Support/BiliUp/config.json` 或 Windows `%LOCALAPPDATA%\BiliUp\config.json`；`UpList`、`SortedMp4` 和 `OtherVideos` 位于用户选择的 `knowledge_base_root`。Tauri 必须复用现有用户配置且不得移动知识库数据。实施计划见 `TAURI_DEVELOPMENT_PLAN.md`。
+> BiliUp 当前项目适配：现有用户配置固定在 macOS `~/Library/Application Support/BiliUp/config.json` 或 Windows `%LOCALAPPDATA%\BiliUp\config.json`；`UpList`、`SortedMp4` 和 `OtherVideos` 位于用户选择的 `knowledge_base_root`。Tauri 必须复用现有用户配置且不得移动知识库数据。
 
 ## 1. 目标与完成标准
 

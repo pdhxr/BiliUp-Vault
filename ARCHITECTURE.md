@@ -16,7 +16,7 @@ Tauri 主进程
                     app/static → app/routes → core → repositories
 ```
 
-详细需求见 [PRD.md](PRD.md)，实施顺序和逐阶段验证见 [TAURI_DEVELOPMENT_PLAN.md](TAURI_DEVELOPMENT_PLAN.md)。
+详细需求见 [PRD.md](PRD.md)。
 
 ## 三层架构
 
