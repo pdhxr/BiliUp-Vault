@@ -27,6 +27,17 @@ class TauriPackagingTests(unittest.TestCase):
         self.assertEqual(package["version"], APP_VERSION)
         self.assertEqual(cargo["package"]["version"], APP_VERSION)
 
+    def test_windows_tauri_runner_invokes_javascript_entry_without_cmd_shim(self) -> None:
+        source = (_PROJECT_ROOT / "packaging/run_tauri.mjs").read_text(encoding="utf-8")
+
+        self.assertIn("const command = isWindows ? 'node' : 'node_modules/.bin/tauri';", source)
+        self.assertIn(
+            "const prefix = isWindows ? ['node_modules/@tauri-apps/cli/tauri.js'] : [];",
+            source,
+        )
+        self.assertIn("spawnSync(command, [...prefix, action", source)
+        self.assertNotIn("tauri.cmd", source)
+
     def test_bundle_declares_platform_icons(self) -> None:
         config = json.loads((_PROJECT_ROOT / "src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
         icons = config["bundle"]["icon"]
