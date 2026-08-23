@@ -2,7 +2,7 @@
 
 BiliUp 是一个跨 macOS 和 Windows 运行的本地 B 站视频知识库工具。首次运行时，用户选择自己的知识库目录；应用通过 OpenCLI 复用已登录的 Chrome 会话访问 B 站，不保存 B 站密码或 Cookie。
 
-当前版本：`0.3.0`。安装包请从 [GitHub Releases](https://github.com/pdhxr/BiliUp-Vault/releases) 下载，版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：`0.3.1`。安装包请从 [GitHub Releases](https://github.com/pdhxr/BiliUp-Vault/releases) 下载，版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 功能概览
 
