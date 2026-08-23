@@ -500,6 +500,7 @@
       });
       const data = await responseData(response);
       if (!response.ok) throw new Error(data.detail || '停止批量追踪并下载失败');
+      if (window.downloadProgress) await window.downloadProgress.refresh();
       if (data.status === 'idle') {
         stopBatchTrackButton.hidden = true;
         stopBatchTrackButton.disabled = false;

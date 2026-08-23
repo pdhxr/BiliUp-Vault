@@ -218,6 +218,17 @@ def queue_downloads(
     return jobs
 
 
+def cancel_queued_downloads(bvids: list[str]) -> int:
+    """立即把尚未被线程池执行的下载标记为已停止。"""
+    cancelled = 0
+    for bvid in dict.fromkeys(str(value).strip() for value in bvids if str(value).strip()):
+        if get_progress(bvid).get("status") != "queued":
+            continue
+        set_progress(bvid, status="cancelled", error="", finished_at=now_iso())
+        cancelled += 1
+    return cancelled
+
+
 def _run_job(uid: str, bvid: str, cancel_event: Event | None = None) -> None:
     try:
         _download_one(uid, bvid, cancel_event=cancel_event)

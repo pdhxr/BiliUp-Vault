@@ -28,9 +28,9 @@ from core.single_video_download import _run_existing_job as run_existing_single_
 from core.repositories.videos import list_videos, mark_downloaded, merge_videos
 from core.subtitle_download import download_subtitle, has_transcript
 from core.up_search import _parse_items, search_up
-from core.video_download import DownloadCancelledError, _download_one, _run_job as run_video_download_job, queue_downloads
+from core.video_download import DownloadCancelledError, _download_one, _run_job as run_video_download_job, cancel_queued_downloads, queue_downloads
 from core.video_batch_track_download import _run as run_batch_track_download
-from core.video_batch_track_download import request_batch_track_cancel, start_batch_track_download
+from core.video_batch_track_download import batch_track_download_progress, request_batch_track_cancel, start_batch_track_download
 from core.video_cover_backfill import backfill_covers_for_up
 from core.video_reconcile import reconcile_up_videos
 from core.video_sync import refresh_up_videos, refresh_up_videos_with_details
@@ -583,7 +583,7 @@ class CoreTests(unittest.TestCase):
         popen.return_value.communicate.return_value = ("", "")
         popen.return_value.returncode = 0
         run_opencli(["--version"], timeout=5)
-        self.assertTrue(popen.call_args.kwargs["env"]["PATH"].startswith("tmp/bin"))
+        self.assertTrue(popen.call_args.kwargs["env"]["PATH"].startswith(str(Path("tmp/bin"))))
 
     @patch("core.utils.system.network.socket.socket")
     def test_occupied_preferred_port_uses_available_port(self, socket_factory) -> None:
@@ -1220,6 +1220,47 @@ class CoreTests(unittest.TestCase):
         subtitles.assert_not_called()
         queue.assert_not_called()
 
+    @patch("core.video_batch_track_download.cancel_queued_downloads", return_value=2)
+    @patch("core.video_batch_track_download.get_progress")
+    def test_batch_track_stop_immediately_cancels_queued_downloads(self, progress, cancel_queued) -> None:
+        progress.side_effect = lambda bvid: {
+            "status": "cancelled" if bvid in {"BVqueued1", "BVqueued2"} else "downloading"
+        }
+        from core.video_batch_track_download import _state, _state_lock
+        with _state_lock:
+            _state.update({
+                "running": True,
+                "cancel_requested": False,
+                "download_cancelled": 0,
+                "results": [{
+                    "download_jobs": [
+                        {"bvid": "BVrunning"},
+                        {"bvid": "BVqueued1"},
+                        {"bvid": "BVqueued2"},
+                    ],
+                }],
+            })
+
+        self.assertEqual(request_batch_track_cancel()["status"], "stopping")
+
+        cancel_queued.assert_called_once_with(["BVrunning", "BVqueued1", "BVqueued2"])
+        self.assertEqual(batch_track_download_progress()["download_cancelled"], 2)
+        from core.video_batch_track_download import _cancel_event
+        with _state_lock:
+            _state["running"] = False
+        _cancel_event.clear()
+
+    def test_cancel_queued_downloads_updates_progress_immediately(self) -> None:
+        set_progress("BVqueue-stop", status="queued", title="排队视频")
+        set_progress("BVactive-keep", status="downloading", title="下载视频")
+
+        cancelled = cancel_queued_downloads(["BVqueue-stop", "BVactive-keep"])
+
+        rows = {row["bvid"]: row for row in progress_rows(["BVqueue-stop", "BVactive-keep"])}
+        self.assertEqual(cancelled, 1)
+        self.assertEqual(rows["BVqueue-stop"]["status"], "cancelled")
+        self.assertEqual(rows["BVactive-keep"]["status"], "downloading")
+
     @patch("core.video_batch_track_download.Thread")
     @patch("core.video_batch_track_download.batch_track_since_date", return_value="2026-07-01")
     @patch("core.video_batch_track_download.knowledge_base_root")
@@ -1274,7 +1315,7 @@ class CoreTests(unittest.TestCase):
     def test_desktop_settings_reports_configuration_file(self, _port, _configuration) -> None:
         from core.setup import desktop_settings
 
-        self.assertEqual(desktop_settings()["config_file"], "/tmp/BiliUp/config.json")
+        self.assertEqual(desktop_settings()["config_file"], str(Path("/tmp/BiliUp/config.json")))
 
     def test_desktop_port_accepts_boundaries_and_preserves_fields(self) -> None:
         library_root = self.root / "knowledge-base"

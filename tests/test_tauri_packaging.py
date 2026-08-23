@@ -59,9 +59,10 @@ class TauriPackagingTests(unittest.TestCase):
     @patch.object(_MODULE.Path, "stat")
     @patch.object(_MODULE.Path, "mkdir")
     @patch.object(_MODULE.subprocess, "run")
+    @patch.object(_MODULE.platform, "system", return_value="Darwin")
     @patch.object(_MODULE, "rust_target", return_value="aarch64-apple-darwin")
     def test_sidecar_uses_tauri_target_name(
-        self, _target, run, _mkdir, stat, _chmod, _is_file, copy
+        self, _target, _system, run, _mkdir, stat, _chmod, _is_file, copy
     ) -> None:
         stat.return_value.st_mode = 0o644
         destination = build_sidecar()

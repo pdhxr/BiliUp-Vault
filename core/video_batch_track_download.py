@@ -12,7 +12,7 @@ from core.configuration import batch_track_since_date, knowledge_base_root
 from core.download_progress import get_progress
 from core.opencli_videos import OpenCliCancelledError
 from core.repositories.followings import find
-from core.video_download import queue_downloads
+from core.video_download import cancel_queued_downloads, queue_downloads
 from core.video_errors import FollowingNotFoundError
 from core.subtitle_download import queue_missing_subtitles_for_up
 from core.video_cover_backfill import backfill_covers_for_up
@@ -356,4 +356,15 @@ def request_batch_track_cancel() -> dict[str, object]:
         _state["cancel_requested"] = True
         current = _copy_state_unlocked()
     _cancel_event.set()
+    download_bvids = [
+        str(job.get("bvid", ""))
+        for result in current.get("results", [])
+        if isinstance(result, dict)
+        for job in result.get("download_jobs", [])
+        if isinstance(job, dict) and job.get("bvid")
+    ]
+    cancel_queued_downloads(download_bvids)
+    if download_bvids:
+        statuses = [get_progress(bvid).get("status") for bvid in dict.fromkeys(download_bvids)]
+        _set(download_cancelled=sum(status == "cancelled" for status in statuses))
     return {"status": "stopping", "current": current}
